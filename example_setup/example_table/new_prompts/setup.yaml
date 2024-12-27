@@ -1,0 +1,9 @@
+dependencies: []
+changed_columns: [paper_name, paper_path, sub_category]
+function: create_paper_table_from_folders
+file: table_generation.py
+is_global: true
+is_udf: false
+is_single_col: false
+arguments:
+  - /../../sampled_papers/2012

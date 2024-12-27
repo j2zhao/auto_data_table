@@ -1,0 +1,19 @@
+type: llm
+dependencies: [llm_storage.openai_id, self.paper_name]
+changed_columns: [q3]
+retry: 5
+n_threads: 1 # need to test n_threads
+context_files:
+  - <<llm_storage.openai_id[paper_name:self.paper_name]
+context_msgs:
+  - "Would you best classify Clara as a: CATEGORIES?"
+questions:
+  - "What motivates Percival to help Clara even after she disrupts time?"
+open_ai_key: ./open_ai_key.txt
+output_type: category
+entity_name: motivations
+category_names:
+  - Protagonist seeking knowledge
+  - Reckless adventurer
+  - Reluctant hero forced into action
+  - Naive child learning responsibility

@@ -1,0 +1,9 @@
+dependencies: [paper_name, sub_category]
+changed_columns: [category]
+function: table_categories
+file: table_manipulation.py
+is_global: true
+is_udf: true
+arguments:
+  - FILE_PATH #todo
+  - <<example_table.sub_category>>
