@@ -2,29 +2,17 @@
 General Parsing Function
 
 '''
-from typing import Optional, Union, Any
-from dataclasses import dataclass
-from parse_code import execute_code_from_prompt
-from parse_llm import execute_llm_from_prompt
-from auto_data_table.meta_operations import MetaDataStore
-import os
-from parse_helper_aux import *
-from dataclasses_json import dataclass_json
+from typing import Optional, Any
 
+import os
 import pandas as pd
 
-@dataclass_json
-@dataclass
-class TableReference:
-    table: str
-    column: str
-    key: Optional[dict[str, Union["TableReference", str]]] = None
-    
+from auto_data_table.parse_prompts.parse_helper_aux import *
+from auto_data_table.parse_prompts.parse_code import execute_code_from_prompt
+from auto_data_table.parse_prompts.parse_llm import execute_llm_from_prompt
+from auto_data_table.meta_operations import MetaDataStore
 
-@dataclass
-class TableString:
-    text: str
-    references: list[TableReference]
+
 
 def get_executing_prompts(prompts:dict[str, Any], old_prompts:dict[str, Any], logs: MetaDataStore, 
                           table_name: str, db_dir:str, start_time: int) -> list[str]:

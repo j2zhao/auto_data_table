@@ -21,7 +21,7 @@ def test_single_row():
     # create db
     command = ["python", "execute_operation.py",  "-op", "database", "-db", "test_database"]
     subprocess.run(command)
-    raise ValueError()
+    #raise ValueError()
     # create tables
     command = ["python", "execute_operation.py", "-op", "table", "-db", "test_database", "-t", "stories"]
     subprocess.run(command)
@@ -29,6 +29,7 @@ def test_single_row():
     subprocess.run(command)
     command = ["python", "execute_operation.py",  "-op", "table", "-db", "test_database", "-t", "llm_questions"]
     subprocess.run(command)
+    raise ValueError()
     # TODO: move yaml to tables
     files = ['fetch_stories.yaml']
     copy_files_to_table(yaml_base_dir, db_dire, "stories", files)
@@ -62,3 +63,10 @@ def test_column_restart():
 def test_row_restart():
     # USE timeout test
     pass
+
+def cleanup_folder():
+    shutil.rmtree(yaml_base_dir)
+
+if __name__ == '__main__':
+    test_single_row()
+    #shutil.rmtree(yaml_base_dir)

@@ -1,13 +1,28 @@
 import yaml
 import re
-from meta_operations import MetaDataStore
-from parse_helper import TableString, TableReference
 import os
-from file_operations import get_table
 from collections import deque 
-from typing import Any, Union
-
 import pandas as pd
+
+from typing import Optional, Union, Any
+from dataclasses import dataclass
+from dataclasses_json import dataclass_json
+
+from auto_data_table.meta_operations import MetaDataStore
+from auto_data_table.file_operations import get_table
+
+@dataclass_json
+@dataclass
+class TableReference:
+    table: str
+    column: str
+    key: Optional[dict[str, Union["TableReference", str]]] = None
+    
+
+@dataclass
+class TableString:
+    text: str
+    references: list[TableReference]
 
 def parse_prompt_from_string(val_str: str) -> TableString:
     val_str = val_str.strip()

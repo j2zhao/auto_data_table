@@ -1,12 +1,11 @@
-from dataclasses import dataclass
-from typing import Optional
 import os
-import pandas as pd
-import threading
 import shutil
+import pandas as pd
 import json
 import time
 from filelock import FileLock
+import threading
+from typing import Optional
 
 
 def setup_database(db_dir: str, replace: bool = False) -> None:
@@ -52,8 +51,6 @@ def setup_table_folder(table_name: str, db_dir: str, replace: bool = False) -> N
     if table_name == 'DATABASE':
         raise ValueError('Special Name Taken: DATABASE.')
     table_dir = os.path.join(db_dir, table_name)
-    with open(os.path.join(table_dir, 'UPDATE.json'), "w") as file:
-        json.dump(False, file)
     if not replace and os.path.exists(table_dir):
         raise FileExistsError('path already taken')
     elif replace and os.path.isdir(table_dir):
@@ -61,6 +58,8 @@ def setup_table_folder(table_name: str, db_dir: str, replace: bool = False) -> N
     elif replace and os.path.isfile(table_dir):
         os.remove(table_dir)
     os.makedirs(table_dir)
+    with open(os.path.join(table_dir, 'UPDATE.json'), "w") as file:
+        json.dump(False, file)
     setup_temp_table(table_name, db_dir)
 
 

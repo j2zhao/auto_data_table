@@ -1,6 +1,6 @@
 import openai
 import pandas as pd
-from llm_functions.open_ai_thread import  add_open_ai_secret
+from auto_data_table.llm_functions.open_ai_thread import  add_open_ai_secret
 from tqdm import tqdm
 
 

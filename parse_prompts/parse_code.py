@@ -1,10 +1,12 @@
 import os
-import auto_data_table.file_operations as file_operations
-import parse_helper
 from typing import Optional, Any, Callable
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+
+from auto_data_table import file_operations
+from auto_data_table.parse_prompts import parse_helper
+
 
 def load_function_from_file(file_path:str, function_name:str) -> tuple[Callable, Any]:
     # Define a namespace to execute the file in

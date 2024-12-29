@@ -1,17 +1,8 @@
-'''
-Most Logic Happens Here 
-
-'''
-# from collections import defaultdict, deque
-# from auto_data_table.parse_prompts.parse_helper import *
-# from auto_data_table.meta_operations import MetaDataStore, TempLogging
-# import time
-# import auto_data_table.database_operations_ as database_operations_
-# import auto_data_table.file_operations as file_operations
-import file_operations
 import time
-from meta_operations import MetaDataStore
-from parse_prompts.parse_helper import *
+
+from  auto_data_table import file_operations
+from auto_data_table.meta_operations import MetaDataStore
+from auto_data_table.parse_prompts.parse_helper import *
 
 def setup_table(table_name: str, db_dir: str, author: str, replace: bool = False) -> None:
     logs = MetaDataStore(db_dir)

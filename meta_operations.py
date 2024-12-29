@@ -1,17 +1,8 @@
-'''
-Log Operation
-If I convert to multi-user operations -> I will need a lock on files when initialized !
-Actually the log and temp log files should always be in the same location
-Actually I need the log to document execution and prompts?
-TODO: Implement Multiple-Threaded Table UPDATES (!) 
-'''
 import json
-import ast 
 import os
-from dataclasses import dataclass, asdict
-from typing import Optional, Union, Any
-from auto_data_table.file_operations import get_table
+from dataclasses import dataclass
 from dataclasses_json import dataclass_json
+from typing import Optional, Union, Any
 from filelock import FileLock
 
 @dataclass_json
