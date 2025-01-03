@@ -1,14 +1,14 @@
 type: llm
 dependencies: [llm_storage.openai_id, self.paper_name]
-changed_columns: [q1]
-n_threads: 1 # need to test n_threads
+changed_columns: [q2]
 retry: 5
-
+n_threads: 1 # need to test n_threads
 context_files:
   - <<llm_storage.openai_id[paper_name:self.paper_name]
 context_msgs:
   - "Use this story to answer questions"
 questions:
-  - "How does Clara's curiosity shape her journey and development throughout the story?"
+  - "What motivates Percival to help Clara even after she disrupts time?"
 open_ai_key: ./open_ai_key.txt
-output_type: freeform
+output_type: entity_list
+entity_name: motivations

@@ -2,7 +2,7 @@ type: code
 dependencies: [stories.paper_name]
 changed_columns: [paper_name]
 function: create_data_table_from_table
-file: table_generation.py
+code_file: table_generation.py
 is_global: true
 is_udf: false
 arguments:
@@ -10,3 +10,4 @@ arguments:
 table_arguments:
   - previous_table: stories
 table_creation: true
+n_threads: 1

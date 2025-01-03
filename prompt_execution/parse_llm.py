@@ -8,8 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from auto_data_table import file_operations
 from auto_data_table.llm_functions.open_ai_thread import Open_AI_Thread, add_open_ai_secret
-from auto_data_table.parse_prompts import parse_helper
-from auto_data_table.parse_prompts import llm_prompts
+from auto_data_table.prompt_execution import parse_helper
+from auto_data_table.prompt_execution import llm_prompts
 
 lock = threading.Lock()
 
@@ -90,7 +90,7 @@ def _execute_llm(prompt: dict, client: Optional[openai.OpenAI], cache: dict[str,
 
 
 def execute_llm_from_prompt(prompt:dict, columns: list, cache: dict, n_threads: int,
-                            table_name:str, db_dir:str) -> None:
+                            table_name:str, db_dir:str, time_id: Optional[int]) -> None:
     '''Only support OpenAI Thread prompts for now'''
     key_file =  prompt['open_ai_key']
     

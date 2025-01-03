@@ -1,0 +1,35 @@
+{
+    "stories": {
+        "start_column_update": {
+            "table": "stories",
+            "author": "command_line",
+            "operation": "start_column_update",
+            "time": 1735586857,
+            "start_time": 1735586857,
+            "data": [
+                [
+                    "fetch_stories"
+                ],
+                [
+                    "paper_path",
+                    "paper_name"
+                ]
+            ]
+        },
+        "setup_update_table": {
+            "table": "stories",
+            "author": "command_line",
+            "operation": "setup_update_table",
+            "time": 1735586857,
+            "start_time": 1735586857,
+            "data": [
+                [
+                    "paper_path",
+                    "paper_name"
+                ]
+            ]
+        }
+    },
+    "llm_storage": {},
+    "llm_questions": {}
+}

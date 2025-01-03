@@ -10,6 +10,7 @@ def copy_files_to_table(base_dir, db_dir, table_name, files):
     org_path = os.path.join(base_dir, table_name)
     new_path = os.path.join(db_dir, table_name)
     new_path = os.path.join(new_path, 'TEMP')
+    new_path = os.path.join(new_path, 'prompts')
     for file in files:
         org_path_ = os.path.join(org_path, file)
         shutil.copy(org_path_, new_path)
@@ -19,9 +20,8 @@ db_dire = './test_database'
 
 def test_single_row():
     # create db
-    command = ["python", "execute_operation.py",  "-op", "database", "-db", "test_database"]
+    command = ["python", "execute_operation.py",  "-op", "database", "-db", "test_database", "-r"]
     subprocess.run(command)
-    #raise ValueError()
     # create tables
     command = ["python", "execute_operation.py", "-op", "table", "-db", "test_database", "-t", "stories"]
     subprocess.run(command)
@@ -29,7 +29,6 @@ def test_single_row():
     subprocess.run(command)
     command = ["python", "execute_operation.py",  "-op", "table", "-db", "test_database", "-t", "llm_questions"]
     subprocess.run(command)
-    raise ValueError()
     # TODO: move yaml to tables
     files = ['fetch_stories.yaml']
     copy_files_to_table(yaml_base_dir, db_dire, "stories", files)
@@ -37,10 +36,11 @@ def test_single_row():
     copy_files_to_table(yaml_base_dir, db_dire, "llm_storage", files)
     files = ['fetch_llm_question.yaml', 'question_1.yaml', 'question_2.yaml', 'question_3.yaml']
     copy_files_to_table(yaml_base_dir, db_dire, "llm_questions", files)
-
+    #raise ValueError()
     # execute updates
-    command = ["python", "execute_operation.py",  "-op", "update", "-db", "test_database", "-t", "stories"]
+    command = ["python", "execute_operation.py",  "-op", "update_rows", "-db", "test_database", "-t", "stories"]
     subprocess.run(command)
+    raise ValueError()
     command = ["python", "execute_operation.py",  "-op", "update", "-db", "test_database", "-t", "llm_storage"]
     subprocess.run(command)
     command = ["python", "execute_operation.py",  "-op", "update", "-db", "test_database", "-t", "llm_questions"]

@@ -9,3 +9,4 @@ arguments:
   - folder_dir: ../test_data/stories
   - copies: 5
 table_creation: true
+n_threads: 1
