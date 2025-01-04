@@ -8,27 +8,26 @@ from concurrent.futures import ThreadPoolExecutor
 
 from auto_data_table import file_operations
 from auto_data_table.llm_functions.open_ai_thread import Open_AI_Thread, add_open_ai_secret
-from auto_data_table.prompt_execution import parse_helper
+from auto_data_table.prompt_execution import prompt_parser 
 from auto_data_table.prompt_execution import llm_prompts
 
-lock = threading.Lock()
 
-
-def _execute_llm(prompt: dict, client: Optional[openai.OpenAI], cache: dict[str, pd.DataFrame], 
-                 index: int, table_name:str, db_dir: str) -> None:
-    global df
+def _execute_llm(index: int, prompt: dict, client: Optional[openai.OpenAI], 
+                 lock: threading.Lock, cache: dict[str, pd.DataFrame], 
+                 table_name:str, db_dir: str) -> None:
+    df = cache[table_name]
     to_change = False
     for i, column in enumerate(prompt['changed_columns']):
-        if df.iloc[index, df.columns.get_loc(column)] == '':
+        if df.at[index, column] == '':
             to_change = True
     if not to_change:
         return 
     # get open_ai file keys
     name = prompt['name'] + str(index)
-    prompt['context_files'] = parse_helper.parse_prompt_to_str(prompt['context_files'], index,cache, table_name, db_dir)
-    prompt['context_msgs'] = parse_helper.parse_prompt_to_str(prompt['context_msgs'], index, cache, table_name, db_dir)
-    prompt['instructions'] = parse_helper.parse_prompt_to_str(prompt['instructions'], index,cache, table_name, db_dir)
-    prompt['questions'] = parse_helper.parse_prompt_to_str(prompt['questions'], index, cache, table_name, db_dir)
+    prompt['context_files'] = prompt_parser.get_table_value(prompt['context_files'], index,cache)
+    prompt['context_msgs'] = prompt_parser.get_table_value(prompt['context_msgs'], index, cache)
+    prompt['instructions'] = prompt_parser.get_table_value(prompt['instructions'], index,cache)
+    prompt['questions'] = prompt_parser.get_table_value(prompt['questions'], index, cache)
 
     uses_files = len(prompt['context_files']) > 0
     thread = Open_AI_Thread(name, prompt['model'], prompt['temperature'], prompt['retry'],
@@ -85,9 +84,8 @@ def _execute_llm(prompt: dict, client: Optional[openai.OpenAI], cache: dict[str,
     
     with lock:
         for i, column in enumerate(prompt['changed_columns']):
-            df.iloc[index, df.columns.get_loc(column)] = results[i]
+            df.at[index, column]= results[i]
         file_operations.write_table(df, table_name, db_dir)
-
 
 def execute_llm_from_prompt(prompt:dict, columns: list, cache: dict, n_threads: int,
                             table_name:str, db_dir:str, time_id: Optional[int]) -> None:
@@ -99,9 +97,9 @@ def execute_llm_from_prompt(prompt:dict, columns: list, cache: dict, n_threads: 
         add_open_ai_secret(secret)
     client = openai.OpenAI()
     indices = list(range(len(cache[table_name])))
+    lock = threading.Lock()
     with ThreadPoolExecutor(max_workers=n_threads) as executor:
-        futures = [
-            executor.submit(_execute_llm, prompt, client, cache, i, columns,  table_name, db_dir) for i in indices
-        ]
-        for future in futures:
-            future.result()  # Wait for completion and raise exceptions if any
+        executor.map(
+            lambda i: _execute_llm(i, prompt, client, lock, cache, table_name, db_dir),
+            indices
+        )

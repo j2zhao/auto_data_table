@@ -22,37 +22,37 @@ def parse_prompt_from_yaml(data:Any, table_name: str) -> Any:
     elif isinstance(data, list):
         return [parse_prompt_from_yaml(v) for v in data]
     elif isinstance(data, str):
-        return parse_prompt_from_string(data, table_name)
+        return _parse_prompt_from_string(data, table_name)
     else:
         return data
     
-def parse_obj_from_prompt(prompt:Any, index:int, cache:dict[str, pd.DataFrame]) -> Any:
+def parse_obj_from_prompt(prompt:Any, index:Optional[int], cache:dict[str, pd.DataFrame]) -> Any:
     if isinstance(prompt, TableString):
         prompt_ = prompt.text
         for ref in prompt.references: 
-            ref_ = read_table_reference(ref, index=index, cache= cache)
+            ref_ = _read_table_reference(ref, index=index, cache= cache)
             prompt_ = prompt_.replace('<<>>', ref_, 1)
     elif isinstance(prompt, TableReference):
-        prompt_ = read_table_reference(prompt, index=index, cache= cache)
+        prompt_ = _read_table_reference(prompt, index=index, cache= cache)
     elif isinstance(prompt, dict):
         prompt_ = {}
         for key in prompt:
-            temp = read_table_reference(prompt[key], index=index, cache= cache)
+            temp = _read_table_reference(prompt[key], index=index, cache= cache)
             prompt_[key] = temp
     
     elif isinstance(prompt, list):
         prompt_ = []
         for val in prompt:
-            temp = read_table_reference(val, index=index, cache= cache)
+            temp = _read_table_reference(val, index=index, cache= cache)
             prompt_.append(temp)
     else:
         prompt_ = prompt
     return prompt_
 
-def parse_prompt_from_string(val_str: str, table_name:str) -> TableString:
+def _parse_prompt_from_string(val_str: str, table_name:str) -> TableString:
     val_str = val_str.strip()
     if val_str.startswith('<<') and val_str.endswith('>>'):
-        return parse_table_reference(val_str[2:-2])
+        return _parse_table_reference(val_str[2:-2])
     # Regular expression to match the pattern <<value>>
     pattern = r'<<(.*?)>>'
     # Find all matches
@@ -62,18 +62,13 @@ def parse_prompt_from_string(val_str: str, table_name:str) -> TableString:
     modified_string = re.sub(pattern, '<<>>', val_str)
     values = []
     for val in extracted_values:
-        values.append(parse_table_reference(val, table_name))
+        values.append(_parse_table_reference(val, table_name))
     table_string =  TableString(modified_string, values)
     return table_string
 
 
 
-def parse_table_reference(s: str, table_name:str) -> TableReference:
-    """
-    Parse a string of the form:
-    "table_name.column[key_column: value, key_column: value]"
-    recursively into a TableReference.
-    """
+def _parse_table_reference(s: str, table_name:str) -> TableReference:
     s = s.strip()
 
     # Pattern: (table_name.column)([ ... ])?
@@ -89,7 +84,7 @@ def parse_table_reference(s: str, table_name:str) -> TableReference:
     if not inner_content:
         return TableReference(table=main_table, column=main_col, key={})
 
-    pairs = split_top_level_list(inner_content)
+    pairs = _split_top_level_list(inner_content)
     
     key_dict = {}
     for pair in pairs:
@@ -103,14 +98,14 @@ def parse_table_reference(s: str, table_name:str) -> TableReference:
         if val_str.startswith("\'") and  val_str.ends("\'"):
             val = val_str
         else:
-            val = parse_table_reference(val_str)
+            val = _parse_table_reference(val_str)
         key_dict[key_col] = val
     if main_table == 'self':
         main_table = table_name
     return TableReference(table=main_table, column=main_col, key=key_dict)
 
 
-def split_top_level_list(s: str) -> list[str]:
+def _split_top_level_list(s: str) -> list[str]:
     """
     Split a string by commas that are not nested inside square brackets.
     This is to correctly handle multiple key-value pairs.
@@ -136,7 +131,7 @@ def split_top_level_list(s: str) -> list[str]:
     return pairs
 
 
-def read_table_reference(ref:TableReference, index: int, cache: dict)-> Union[str, list[str]]:
+def _read_table_reference(ref:TableReference, index: Optional[int], cache: dict)-> Union[str, list[str]]:
     table = ref.table
     df = cache[table]
     conditions = {}
@@ -144,7 +139,7 @@ def read_table_reference(ref:TableReference, index: int, cache: dict)-> Union[st
         conditions['index'] = index
     for condition, value in ref.key:
         if isinstance(value, TableReference):
-            value = read_table_reference(value, index = index, cache = cache)
+            value = _read_table_reference(value, index = index, cache = cache)
             if len(value) > 1:
                 raise ValueError("multiple values for {key}")
             value = value[0]

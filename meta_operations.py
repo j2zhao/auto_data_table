@@ -33,7 +33,6 @@ class SetupTableInstanceLog(Log): # DONE
 class ExecuteTableLog(Log):
     changed_columns: list[str]
     all_columns: list[str]
-    changed_rows: int
     time_id = int
 
 @dataclass_json
@@ -74,7 +73,7 @@ class TempLog(Log):
     operation: str
     data: dict[str, Any] = {}
 
-TempLogDict = Dict[str, Dict[str, list[TempLog]]]
+TempLogDict = Dict[str, Dict[str, TempLog]]
 
 ColumnHistoryDict = dict[str, dict[str, list[int]]]
 TableHistoryDict = dict[str, list[int]]
@@ -236,11 +235,14 @@ class MetaDataStore:
 
     def write_to_log(self, log_entry: Union[LogEntry, dict]) -> None:
         with self.lock:
-            table_name = log_entry.log.table_name
+            #table_name = log_entry.log.table_name
             if isinstance(log_entry, LogEntry):
                 log_entry = log_entry.to_json()
+            author = log_entry['log']['author']
+            start_time = log_entry['log']['start_time']
+            table_name = log_entry['log']['table_name']
             self.write_to_temp_log(operation = 'write_final_log', table_name = table_name,
-                           author = log_entry.log.author, start_time = log_entry.log.start_time, data = {'log':log_entry}
+                           author = author, start_time = start_time, data = {'log':log_entry}
                            )
             self._save_logs(log_entry)
             temp_logs = self._get_temp_logs()
@@ -257,12 +259,19 @@ class MetaDataStore:
             temp_logs = self._get_temp_logs()
             if table_name not in temp_logs:
                 temp_logs[table_name] = {}
-            if operation not in temp_logs[table_name]:
-                temp_logs[table_name][operation] = []
             kwargs['op_time'] = time.time()
             log = TempLog(**kwargs)
-            temp_logs[table_name][operation].append(log)
+            temp_logs[table_name][operation] = log
             self._save_temp_logs(temp_logs)
+    
+    def add_restart_time(self, operation: str, time:float, table_name: str):
+        with self.lock:
+            temp_logs = self._get_temp_logs()
+            if 'restarts' not in temp_logs[table_name][operation].data:
+                temp_logs[table_name][operation].data['restarts'] = []
+            temp_logs[table_name][operation].data['restarts'].append(time)
+            self._save_temp_logs(temp_logs)
+
     
     def get_all_tables(self) -> list[str]:
         with self.lock:
