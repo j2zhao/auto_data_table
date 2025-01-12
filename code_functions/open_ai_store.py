@@ -4,11 +4,20 @@ from auto_data_table.llm_functions.open_ai_thread import  add_open_ai_secret
 from tqdm import tqdm
 
 
-def delete_files(client):
+def delete_files(key_file):
+    # TODO: rewrite
+    with open(key_file, 'r') as f:
+        secret = f.read()
+        add_open_ai_secret(secret)
+    
+    client = openai.OpenAI()
     files = list(client.files.list())
+    print(files)
     vector_stores = list(client.beta.vector_stores.list())
+    print(vector_stores)
     my_assistants = list(client.beta.assistants.list())
-    for store in tqdm(vector_stores):
+    print(my_assistants)
+    for store in 1(vector_stores):
         try:
           client.beta.vector_stores.delete(
             vector_store_id=store.id
@@ -32,7 +41,8 @@ def delete_files(client):
     print(client.beta.vector_stores.list())
     print(client.files.list())
     print(client.beta.assistants.list())
-
+    df = pd.DataFrame(columns=["paper_name", "paper_path"])
+    return df
 
 def upload_file_from_table(file_path, key_file):
     with open(key_file, 'r') as f:
@@ -45,4 +55,5 @@ def upload_file_from_table(file_path, key_file):
     file = client.files.create(
                       file=open(file_path, "rb"), purpose="assistants"
                     )
-    return file.id
+    return (file.id,)
+    return ('TEST',)

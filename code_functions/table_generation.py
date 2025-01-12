@@ -17,12 +17,11 @@ def create_paper_table_from_folder(folder_dir, copies):
             name = file.split('.')[0]
             path = os.path.join(folder_dir, file)
             if copies == 1:
-                papers.append([[name, path]])
+                papers.append([name, path])
             else:
                 for i in range(copies):
                     name_ = name + '_' + str(i)
-                    papers.append([[name_, path]])
-    
+                    papers.append([name_, path])
     df = pd.DataFrame(papers, columns=["paper_name", "paper_path"])
     return df
 

@@ -27,28 +27,30 @@ def _execute_code_from_prompt(index: Optional[int], prompt:dict, funct:Callable,
     current_values = []
     for col in prompt['changed_columns']:
         val = df.at[index, col]
-        if df.at[index, col] != pd.NA:
+        if pd.isna(df.at[index, col]):
             empty = True
             break
         else:
             current_values.append(val)
     if not empty:
         return tuple(current_values)
+    
     args = prompt_parser.get_table_value(prompt['arguments'], index, cache)
+    #print(args)
     table_args = {} 
     if 'table_arguments' in prompt:
         for table_name, table in prompt['table_arguments'].items():
             table_args[table_name] = cache[table]
-    
     args = args | table_args
     results = funct(**args)
     return tuple(results)
 
 def _execute_single_code_from_prompt(prompt:dict, funct:Callable, cache: dict) -> None:
-
     args = prompt_parser.get_table_value(prompt['arguments'], None, cache)
     table_args = {} 
     if 'table_arguments' in prompt:
+        #(prompt['table_arguments'])
+        #raise ValueError()
         for tname, table in prompt['table_arguments'].items():
             table_args[tname] = cache[table]
     args = args | table_args
@@ -80,10 +82,12 @@ def execute_code_from_prompt(prompt:Any, cache: dict[str, pd.DataFrame],
         with ThreadPoolExecutor(max_workers=n_threads) as executor: 
             results = list(
                 executor.map(
-                    lambda i: _execute_code_from_prompt(prompt, funct, i, cache, table_name),
+                    lambda i: _execute_code_from_prompt(i, prompt, funct, cache, table_name),
                     indices
                 )
             )
+            #print(results)
+            #for i in indices:
             for col, values in zip(prompt['changed_columns'], zip(*results)):
                 df[col] = values
     else:

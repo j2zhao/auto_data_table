@@ -26,7 +26,7 @@ def setup_database(db_dir: str, replace: bool = False) -> None:
     meta_dir = os.path.join(db_dir, 'metadata')    
     os.makedirs(meta_dir)
 
-    with open(os.path.join(meta_dir, 'log.json'), "w") as file:
+    with open(os.path.join(meta_dir, 'log.txt'), "w") as file:
         pass
 
     with open(os.path.join(meta_dir, 'temp_log.json'), "w") as file:
@@ -34,9 +34,13 @@ def setup_database(db_dir: str, replace: bool = False) -> None:
 
     with open(os.path.join(meta_dir, 'columns_history.json'), "w") as file:
         json.dump({}, file)  
+    
+    with open(os.path.join(meta_dir, 'tables_history.json'), "w") as file:
+        json.dump({}, file)  
 
-
-def setup_temp_table(table_name: str, db_dir: str, prev_time_id: Optional[int] = None) -> None:
+def setup_temp_table(table_name: str, db_dir: str, prev_time_id: Optional[int] = None,
+                     prompts: list[str] = [],
+                    gen_prompt: str = '') -> None:
     table_dir = os.path.join(db_dir, table_name)
     temp_dir = os.path.join(table_dir, 'TEMP')
     if os.path.exists(temp_dir):
@@ -45,25 +49,36 @@ def setup_temp_table(table_name: str, db_dir: str, prev_time_id: Optional[int] =
     os.makedirs(temp_dir)
     prompt_dir = os.path.join(temp_dir, 'prompts')
     current_table_path = os.path.join(temp_dir, 'table.csv')
-    metadata_path = os.path.join(prompt_dir, 'metadata.yaml')
-    if prev_time_id == None:
-        os.makedirs(prompt_dir)
-        df = pd.DataFrame()
-        df.to_csv(current_table_path, index=False)
-        with open(metadata_path, 'w') as file:
-            yaml.dump({}, file)
-    else:
+    metadata_path = os.path.join(prompt_dir, 'metadata.yaml')        
+    if prev_time_id != None:
         prev_dir = os.path.join(table_dir, str(prev_time_id))
         prev_prompt_dir = os.path.join(prev_dir, 'prompts')
         shutil.copytree(prev_prompt_dir, prompt_dir, copy_function=shutil.copy2)
         prev_table_path = os.path.join(prev_dir, 'table.csv')
         shutil.copy2(prev_table_path, current_table_path)
         with open(metadata_path, 'r') as file:
-            metadata = yaml.load(file)
+            metadata = yaml.safe_load(file)
         metadata['origin'] = prev_time_id
         with open(metadata_path, 'w') as file:
             yaml.dump(metadata, file)
-    
+    elif len(prompts) != 0:
+        os.makedirs(prompt_dir)
+        df = pd.DataFrame()
+        df.to_csv(current_table_path, index=False)
+        prompt_dir_ = os.path.join(table_dir, 'prompts')
+        for prompt in prompts:
+            prompt_path_ = os.path.join(prompt_dir_, prompt + '.yaml')
+            prompt_path = os.path.join(prompt_dir, prompt + '.yaml')
+            shutil.copy2(prompt_path_, prompt_path)
+        metadata = {'table_generator': gen_prompt}
+        with open(metadata_path, 'w') as file:
+            yaml.dump(metadata, file) 
+    else:
+        os.makedirs(prompt_dir)
+        df = pd.DataFrame()
+        df.to_csv(current_table_path, index=False)
+        with open(metadata_path, 'w') as file:
+            pass
 
 def setup_table_folder(table_name: str, db_dir: str) -> None:
     if table_name == 'DATABASE':
@@ -76,16 +91,19 @@ def setup_table_folder(table_name: str, db_dir: str) -> None:
     if os.path.isfile(table_dir):
         os.remove(table_dir)
     os.makedirs(table_dir)
+    prompt_dir = os.path.join(table_dir, 'prompts')
+    #raise ValueError()
+    os.makedirs(prompt_dir)
     lock_path = os.path.join(table_dir, 'WRITE.lock')
     FileLock(lock_path)
-    setup_temp_table(table_name, db_dir)
+    #setup_temp_table(table_name, db_dir)
 
 def materialize_table(table_name:str, db_dir: str) -> int:
     table_dir = os.path.join(db_dir, table_name)
     temp_dir = os.path.join(table_dir, 'TEMP')
     if not os.path.exists(temp_dir):
         raise ValueError("No Table In Progress")
-    time_id = time.time() + 1
+    time_id = int(time.time())
     new_dir = os.path.join(table_dir, str(time_id))
     os.rename(temp_dir, new_dir)
     return time_id
@@ -100,8 +118,10 @@ def lock_database(db_dir:str) -> Optional[dict[str, FileLock]]:
     for tname in os.listdir(db_dir):
         table_dir = os.path.join(db_dir, tname) 
         l_path = os.path.join(table_dir, 'WRITE.lock')
-        if os.path.exists(l_path):
-            locks[lock] = lock.acquire()
+        if os.path.exists(l_path) and tname != 'metadata':
+            lock = FileLock(l_path)
+            lock.acquire()
+            locks[lock] = lock
     return locks
 
 
@@ -170,10 +190,7 @@ def write_table(df: pd.DataFrame, table_name: str, db_dir: str) -> None:
 
 def write_prompt(name: str, prompt: dict, table_name: str, db_dir: str) -> None:
     table_dir = os.path.join(db_dir, table_name)
-    if time != None:
-        table_dir = os.path.join(table_dir, str(time))
-    else:
-        table_dir = os.path.join(table_dir, 'TEMP')
+    table_dir = os.path.join(table_dir, 'TEMP')
     meta_path = os.path.join(table_dir, 'prompts')
     meta_path = os.path.join(meta_path, f'{name}.yaml')
     with open(meta_path, 'w') as file:

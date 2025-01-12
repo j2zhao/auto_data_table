@@ -84,18 +84,25 @@ def restart_setup_table(table_name: str, db_dir: str, author: str):
                                   start_time = start_time, restarts = restarts, executed = replace)
     return replace
 
-def setup_table_instance(table_name: str, db_dir: str, author: str, prev_time_id: Optional[int] = None):
+def setup_table_instance(table_name: str, db_dir: str, author: str, 
+                         prev_time_id: Optional[int] = None,
+                         prompts: list[str] = [],
+                         gen_prompt: str = ''):
+    
+    if len(prompts) != 0 and gen_prompt not in prompts:
+        raise ValueError('Need to Define gen_prompt')
     lock = file_operations.lock_table(table_name, db_dir)
     start_time = int(time.time())
     logs = MetaDataStore(db_dir)
     logs.write_to_temp_log(operation = 'start_setup_table_instance', table_name = table_name,
                            author = author, start_time = start_time, 
-                           data = {'prev_time_id': prev_time_id}
+                           data = {'prev_time_id': prev_time_id, 
+                                   'prompts': prompts, 'gen_prompt':gen_prompt}
                            )
-    file_operations.setup_temp_table(table_name, db_dir, prev_time_id) 
-    logs.write_to_setup_table_log(table_name = table_name, prev_time_id = prev_time_id,
+    file_operations.setup_temp_table(table_name, db_dir, prev_time_id, prompts, gen_prompt) 
+    logs.write_to_setup_instance_log(table_name = table_name, prev_time_id = prev_time_id,
                                    author = author, 
-                                  start_time = start_time)
+                                  start_time = start_time, prompts=prompts)
     lock.release()
 
 def restart_setup_table_instance(table_name: str, db_dir: str, author: str):
@@ -103,10 +110,13 @@ def restart_setup_table_instance(table_name: str, db_dir: str, author: str):
     logs = MetaDataStore(db_dir)
     temp_logs, start_time, restarts  = _get_restart_data('start_setup_table_instance', logs, table_name, restart_time)
     prev_time_id = temp_logs['start_setup_table_instance'].data['prev_time_id']
-    file_operations.setup_temp_table(table_name, db_dir, prev_time_id) 
+    prompts = temp_logs['start_setup_table_instance'].data['prompts']
+    gen_prompt = temp_logs['start_setup_table_instance'].data['gen_prompt']
+    file_operations.setup_temp_table(table_name, db_dir, prev_time_id, prompts, gen_prompt) 
     logs.write_to_setup_table_log(table_name = table_name, prev_time_id = prev_time_id,
-                                   author = author, start_time = start_time, restarts = restarts)
-
+                                   author = author, start_time = start_time, restarts = restarts,
+                                   prompts=prompts)
+    
 
 def delete_table(table_name: str, db_dir: str, author: str, time_id: Optional[int]):
     lock = file_operations.lock_database(db_dir)
@@ -130,47 +140,45 @@ def restart_delete_table(table_name: str, db_dir: str, author: str):
                                    author = author, start_time = start_time, restarts = restarts)
 
 
-def execute_table(table_name: str, db_dir: str, author: str) -> bool: # ADD LOGGING
+def execute_table(table_name: str, db_dir: str, author: str): # ADD LOGGING
     lock = file_operations.lock_table(table_name, db_dir)
     start_time = time.time()
     logs = MetaDataStore(db_dir)
     logs.write_to_temp_log(operation = 'start_execute_table', table_name = table_name,
                            author = author, start_time = start_time)
-
+    
     prompts = file_operations.get_prompts(table_name, db_dir)
     metadata = prompts['metadata']
     del prompts['metadata']
     for name, prompt in prompts.items():
+        
         if 'parsed_changed_columns' not in prompt:
             prompt['parsed_changed_columns'] = prompt_parser.get_changed_columns(prompt) # need to deal with?
             file_operations.write_prompt(name, prompt, table_name, db_dir)
-    
     table_generator = prompts[metadata['table_generator']]
     del prompts[metadata['table_generator']]
     prompt_names = prompt_parser.get_execution_order(prompts, table_name)
-    
     if 'origin' in metadata:
         changed_columns = prompt_parser.get_replacement_columns(prompt_names, prompts, metadata['origin'], start_time,
                                                                 table_generator['parsed_changed_columns'] , logs, table_name, db_dir, start_time) 
     else:
-        changed_columns = prompt_parser.get_all_columns(prompts) 
-    
+        changed_columns = prompt_parser.get_all_columns(prompts)
+    changed_columns += table_generator['parsed_changed_columns']
     all_columns = _update_table_columns(changed_columns, table_name, db_dir) 
     data = {'all_columns':all_columns, 'changed_columns': changed_columns, 
             'execution_order':prompt_names, 'table_generator_name': metadata['table_generator']}
-    
     logs.write_to_temp_log(operation = 'update_columms', table_name = table_name,
                            author = author, start_time = start_time, 
                            data = data)
-    table_generator = prompt_parser.convert_reference(table_generator)
-    prompt_execution.execute_generation(table_generator, start_time, table_name, db_dir) 
+    table_generator = prompt_parser.convert_reference(table_generator, table_name)
+    prompt_execution.execute_generation(table_generator, table_name, db_dir, start_time) 
     
     logs.write_to_temp_log(operation = 'table_generator', table_name = table_name,
                            author = author, start_time = start_time)
-    
+
     for name in prompt_names:
-        prompt = prompt_parser.convert_reference(prompts[name])
-        prompt_execution.execute_prompt(prompt, table_name, start_time, db_dir)
+        prompt = prompt_parser.convert_reference(prompts[name], table_name)
+        prompt_execution.execute_prompt(prompt, table_name, db_dir, start_time)
         logs.write_to_temp_log(operation = '{name}', table_name = table_name,
                            author = author, start_time = start_time) 
     
@@ -179,7 +187,8 @@ def execute_table(table_name: str, db_dir: str, author: str) -> bool: # ADD LOGG
                             time_id = time_id, table_name = table_name,
                            author = author, start_time = start_time)
     lock.release()
-
+    # if copy:
+    #     setup_table_instance(table_name, db_dir, 'execute_table', time_id)
 
 def restart_execute_table(table_name: str, db_dir: str, author: str) -> bool: # ADD LOGGING
     restart_time = time.time()

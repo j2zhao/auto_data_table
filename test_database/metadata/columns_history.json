@@ -1,5 +1,18 @@
 {
-    "stories": {},
-    "llm_storage": {},
-    "llm_questions": {}
+    "stories": {
+        "paper_name": [
+            1736460880
+        ],
+        "paper_path": [
+            1736460880
+        ]
+    },
+    "llm_storage": {
+        "openai_id": [
+            1736460881
+        ],
+        "paper_name": [
+            1736460881
+        ]
+    }
 }

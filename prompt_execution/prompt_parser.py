@@ -3,14 +3,14 @@ from typing import Any
 import file_operations
 from meta_operations import MetaDataStore
 from collections import deque 
-from prompt_parser_table import parse_prompt_from_yaml, parse_obj_from_prompt
+from auto_data_table.prompt_execution.prompt_parser_table import parse_prompt_from_yaml, parse_obj_from_prompt
 import pandas as pd
-
+import copy 
 Prompt = dict[Any]
 
 def get_changed_columns(prompt: Prompt) -> list[str]:
     if prompt['type'] == 'code':
-        changed_columns =  prompt['changed_columns']
+        changed_columns =  copy.deepcopy(prompt['changed_columns'])
     elif prompt['type'] == 'llm':
         col = prompt['changed_columns'][0]
         changed_columns = []
@@ -23,8 +23,8 @@ def get_changed_columns(prompt: Prompt) -> list[str]:
 
 
 
-def convert_reference(prompt: Prompt) -> Prompt:
-    return parse_prompt_from_yaml(prompt)
+def convert_reference(prompt: Prompt, table_name: str) -> Prompt:
+    return parse_prompt_from_yaml(prompt, table_name)
 
 
 def get_table_value(item: Any, index: int, cache:dict[str, pd.DataFrame]) -> str:
@@ -34,18 +34,19 @@ def get_table_value(item: Any, index: int, cache:dict[str, pd.DataFrame]) -> str
 def topological_sort(items:list, dependencies:dict)-> list:
     # Step 1: Build the graph and in-degree count
     graph = {}
+    graph = {item: [] for item in items}
     in_degree = {item: 0 for item in items}
 
+    in_degree = {item: 0 for item in items}
     for item, deps in dependencies.items():
         for dep in deps:
             if dep not in graph:
                 graph[dep] = []
             graph[dep].append(item)
             in_degree[item] += 1
-
     # Step 2: Initialize the queue with zero in-degree nodes
     queue = deque([item for item in items if in_degree[item] == 0])
-
+    
     # Step 3: Process the graph
     topo_order = []
     while queue:
@@ -60,7 +61,6 @@ def topological_sort(items:list, dependencies:dict)-> list:
     # Step 4: Check for cycles
     if len(topo_order) != len(items):
         raise ValueError("Cycle detected! Topological sort not possible.")
-
     return topo_order
 
 def get_replacement_columns(top_names, prompts:dict[str, Prompt], old_table_id: int, 
@@ -103,25 +103,25 @@ def get_execution_order(prompts: dict[Prompt], table_name: str) -> list[str]:
     top_names = []
     for name in prompts:
         names.append(name)
+        if name not in dep_graph:
+            dep_graph[name] = []
         for dep in prompts[name]['dependencies']:
             if "." in dep:
                 dep_table = dep.split('.')[0]
                 dep_col = dep.split('.')[1]
                 if dep_table == 'self' or dep_table == table_name:
                     for n in prompts:
-                        if dep_col in prompts[n]["parsed_changed_columns"]:
-                            if name not in dep_graph:
-                                dep_graph[name] = []
+                        if dep_col in prompts[n]["parsed_changed_columns"]:       
                             dep_graph[name].append(n)
-    top_names += topological_sort(names, dep_graph)
+    top_names = topological_sort(names, dep_graph)
     return top_names
 
 def get_all_columns(prompts: list[Prompt]) -> list[str]:
     cols = []
     for name in prompts:
-       cols.append(prompts[name]['parsed_changed_columns'])
+       cols += prompts[name]['parsed_changed_columns']
 
-    if len(cols) != len(set(cols)):
-        raise ValueError('Changed columns of prompts are not Unique')
+    # if len(cols) != len(set(cols)):
+    #     raise ValueError('Changed columns of prompts are not Unique')
     return cols
 

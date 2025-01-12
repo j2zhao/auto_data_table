@@ -6,7 +6,7 @@ code_file: table_generation.py
 is_global: true
 is_udf: false
 arguments:
-  - folder_dir: ../test_data/stories
-  - copies: 1
+  folder_dir: ./test_data/stories
+  copies: 5
 table_creation: true
 n_threads: 1

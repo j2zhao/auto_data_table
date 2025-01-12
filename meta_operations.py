@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 from dataclasses_json import dataclass_json
 from typing import Optional, Union, Any, Dict
 import time
@@ -15,8 +15,8 @@ class Log():
     author: str
     start_time:float
     op_time: float
-    restarts: list[float] = []
     table_name: str
+    restarts: list[float]
 
 @dataclass_json
 @dataclass
@@ -27,13 +27,15 @@ class SetupTableLog(Log): # DONE
 @dataclass
 class SetupTableInstanceLog(Log): # DONE
     prev_time_id: Optional[int]
+    prompts: Optional[list]
+    prompts: list[str]
 
 @dataclass_json
 @dataclass
 class ExecuteTableLog(Log):
+    time_id: int
     changed_columns: list[str]
     all_columns: list[str]
-    time_id = int
 
 @dataclass_json
 @dataclass
@@ -71,7 +73,7 @@ class LogEntry:
 class TempLog(Log):
     table_name: str
     operation: str
-    data: dict[str, Any] = {}
+    data: dict[str, Any]
 
 TempLogDict = Dict[str, Dict[str, TempLog]]
 
@@ -117,12 +119,8 @@ class MetaDataStore:
             json.dump(table_history, f, indent=4)
 
     def _save_logs(self, entry: dict):
-        # Convert the log entry to JSON
-        # if isinstance(entry, LogEntry):
-        #     entry = entry.to_json()
-        # Open the file in append mode
         with open(self.log_file, 'a') as file:
-            file.write(entry + '\n')
+            file.write(json.dumps(entry) + '\n')
     
     def _get_temp_logs(self) -> TempLogDict: 
         with open(self.temp_file, 'r') as file:
@@ -143,17 +141,16 @@ class MetaDataStore:
     def __init__(self, db_dir: str) -> None:
         self.db_dir = db_dir
         meta_dir = os.path.join(db_dir, 'metadata')
-        self.log_file = os.path.join(meta_dir, 'log.json')
+        self.log_file = os.path.join(meta_dir, 'log.txt')
         self.column_history_file = os.path.join(meta_dir, 'columns_history.json')
-        self.table_history_file = os.path.join(meta_dir, 'columns_history.json')
+        self.table_history_file = os.path.join(meta_dir, 'tables_history.json')
         self.temp_file = os.path.join(meta_dir, 'temp_log.json')
-        meta_lock = os.path.join(meta_dir, 'meta.lock')
+        meta_lock = os.path.join(meta_dir, 'LOG.lock')
         self.lock = FileLock(meta_lock)
                
         
-    def write_to_setup_table_log(self, **kwargs) -> None:
-        table_name = kwargs['table_name']
-        executed = kwargs['executed']
+    def write_to_setup_table_log(self, author:str, start_time:float, table_name:str,
+                                   executed:bool, restarts: list[float] = []) -> None:
         with self.lock:
             if executed:
                 columns_history = self._get_column_history()
@@ -162,22 +159,23 @@ class MetaDataStore:
                 table_history = self._get_table_history()
                 table_history[table_name] = []
                 self._save_table_history(table_history)
-            kwargs['op_time'] = time.time()
-            log = SetupTableLog(**kwargs)
-            self.write_to_log(log_entry = LogEntry("SetupTableLog", log), table_name = table_name)
+            op_time = time.time()
+            log = SetupTableLog(author, start_time, op_time, table_name, restarts, executed)
+            self.write_to_log(log_entry = LogEntry("SetupTableLog", log))
 
 
-    def write_to_setup_instance_log(self, **kwargs) -> None:
-        table_name = kwargs['table_name']
+    def write_to_setup_instance_log(self, author: str, start_time:float, table_name:str, 
+                                  prev_time_id: Optional[int], 
+                                  prompts: list[str],
+                                  restarts: list[float] = [] ) -> None:
         with self.lock:
-            kwargs['op_time'] = time.time()
-            log = SetupTableInstanceLog(**kwargs)
-            self.write_to_log(log_entry = LogEntry("SetupTableInstanceLog", log), table_name = table_name)
+            op_time = time.time()
+            log = SetupTableInstanceLog(author, start_time, op_time, table_name, restarts, prev_time_id, prompts)
+            self.write_to_log(log_entry = LogEntry("SetupTableInstanceLog", log))
 
-    def write_to_execute_table_log(self, **kwargs):
-        table_name = kwargs['table_name']
-        changed_columns = kwargs['changed_columns']
-        time_id = kwargs['time_id']
+    def write_to_execute_table_log(self,author: str, start_time:float, table_name:str, 
+                                   changed_columns: list[str], all_columns: list[str], time_id: int,
+                                   restarts: list[float] = []):
         with self.lock:
             table_history = self._get_table_history()
             table_history[table_name].append(time_id)
@@ -188,13 +186,13 @@ class MetaDataStore:
                     columns_history[table_name][column] = []
                 columns_history[table_name][column].append(time_id)
                 self._save_column_history(columns_history)
-            kwargs['op_time'] = time.time()
-            log = ExecuteTableLog(**kwargs)
-            self.write_to_log(log_entry = LogEntry("ExecuteTableLog", log), table_name = table_name)
+            op_time = time.time()
+            log = ExecuteTableLog(author,start_time, op_time, table_name, restarts, time_id,
+                                  changed_columns, all_columns)
+            self.write_to_log(log_entry = LogEntry("ExecuteTableLog", log))
 
-    def write_to_delete_table_log(self, **kwargs) -> None:
-        table_name = kwargs['table_name']
-        time_id = kwargs['time_id']
+    def write_to_delete_table_log(self,author: str, start_time:float, table_name:str, 
+                                  time_id = None,  restarts: list[float] = []) -> None:
         with self.lock:     
             if time_id == None:
                 table_history = self._get_table_history()
@@ -213,31 +211,33 @@ class MetaDataStore:
                             column_history[table_name][col].remove(time_id)
                 self._save_table_history(table_history)
                 self._save_column_history(column_history)
-            kwargs['op_time'] = time.time()
-            log = DeleteTableLog(**kwargs)
-            self.write_to_log(log_entry = LogEntry("DeleteTableLog", log), table_name = table_name)
+            op_time = time.time()
+            log = DeleteTableLog(author, start_time, op_time, table_name, restarts, time_id)
+            self.write_to_log(log_entry = LogEntry("DeleteTableLog", log))
              
             
-    def write_to_failed_log(self, **kwargs) -> None:
-        table_name = kwargs['table_name']
+    def write_to_failed_log(self, author: str, start_time:float, table_name:str, 
+                            failure: str,  restarts: list[float] = []) -> None:
         with self.lock:
-            kwargs['op_time'] = time.time()
-            log = FailedExecuteLog(**kwargs)
-            self.write_to_log(log_entry = LogEntry("FailedExecuteLog", log), table_name = table_name) 
+            op_time = time.time()
+            log = FailedExecuteLog(author, start_time, op_time, table_name, restarts, failure)
+            self.write_to_log(log_entry = LogEntry("FailedExecuteLog", log)) 
 
 
-    def write_to_restart_db_log(self, **kwargs) -> None:
+    def write_to_restart_db_log(self, author: str, start_time:float, in_progress_tables:list[str]
+                                ) -> None:
         with self.lock:
-            kwargs['op_time'] = time.time()
-            kwargs['table_name'] = 'DATABASE'
-            log = RestartDatabaseLog(**kwargs)
+            op_time = time.time()
+            table_name = 'DATABASE'
+            restarts = []
+            log = RestartDatabaseLog(author, start_time, op_time, table_name, restarts, in_progress_tables)
             self.write_to_log(log_entry = LogEntry("RestartDatabaseLog", log)) 
 
     def write_to_log(self, log_entry: Union[LogEntry, dict]) -> None:
         with self.lock:
             #table_name = log_entry.log.table_name
             if isinstance(log_entry, LogEntry):
-                log_entry = log_entry.to_json()
+                log_entry = asdict(log_entry)
             author = log_entry['log']['author']
             start_time = log_entry['log']['start_time']
             table_name = log_entry['log']['table_name']
@@ -249,18 +249,15 @@ class MetaDataStore:
             del temp_logs[table_name]
             self._save_temp_logs(temp_logs)
 
-    def write_to_temp_log(self, **kwargs):
-        if 'table_name' in kwargs['table_name']:
-            table_name = kwargs['table_name']
-        else:
-            table_name = 'DATABASE'
-        operation = kwargs['operation']
+    def write_to_temp_log(self, author: str, start_time:float,
+                          operation:str, data: dict[str, Any] = {}, table_name = 'DATABASE'):
         with self.lock:
             temp_logs = self._get_temp_logs()
             if table_name not in temp_logs:
                 temp_logs[table_name] = {}
-            kwargs['op_time'] = time.time()
-            log = TempLog(**kwargs)
+            op_time = time.time()
+            restarts= []
+            log = TempLog(author, start_time, op_time, table_name, restarts, operation, data)
             temp_logs[table_name][operation] = log
             self._save_temp_logs(temp_logs)
     

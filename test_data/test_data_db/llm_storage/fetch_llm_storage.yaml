@@ -6,8 +6,8 @@ code_file: table_generation.py
 is_global: true
 is_udf: false
 arguments:
-  - columns: paper_name
+  columns: paper_name
 table_arguments:
-  - previous_table: stories
+  df: stories
 table_creation: true
 n_threads: 1

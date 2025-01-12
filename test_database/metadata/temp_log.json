@@ -1,35 +1,33 @@
 {
-    "stories": {
-        "start_column_update": {
-            "table": "stories",
+    "llm_storage": {
+        "start_execute_table": {
             "author": "command_line",
-            "operation": "start_column_update",
-            "time": 1735586857,
-            "start_time": 1735586857,
-            "data": [
-                [
-                    "fetch_stories"
-                ],
-                [
-                    "paper_path",
-                    "paper_name"
-                ]
-            ]
+            "start_time": 1736460882.692012,
+            "op_time": 1736460882.692131,
+            "table_name": "llm_storage",
+            "restarts": [],
+            "operation": "start_execute_table",
+            "data": {}
         },
-        "setup_update_table": {
-            "table": "stories",
+        "update_columms": {
             "author": "command_line",
-            "operation": "setup_update_table",
-            "time": 1735586857,
-            "start_time": 1735586857,
-            "data": [
-                [
-                    "paper_path",
-                    "paper_name"
-                ]
-            ]
+            "start_time": 1736460882.692012,
+            "op_time": 1736460882.69496,
+            "table_name": "llm_storage",
+            "restarts": [],
+            "operation": "update_columms",
+            "data": {
+                "all_columns": [
+                    "paper_name",
+                    "openai_id"
+                ],
+                "changed_columns": [
+                    "paper_name",
+                    "openai_id"
+                ],
+                "execution_order": [],
+                "table_generator_name": "remove_llm_storage"
+            }
         }
-    },
-    "llm_storage": {},
-    "llm_questions": {}
+    }
 }
