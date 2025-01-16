@@ -8,6 +8,7 @@ import pandas as pd
 class TableReference:
     table: str
     column: str
+    version: Optional[str] = None
     key: Optional[dict[str, Union["TableReference", str]]] = None
     
 
@@ -82,6 +83,7 @@ def _parse_table_reference(s: str, table_name:str) -> TableReference:
     inner_content = m.group(4)  # The content inside the brackets if any
     if main_table == 'self':
         main_table = table_name
+    
     if not inner_content:
         return TableReference(table=main_table, column=main_col, key={})
 

@@ -6,7 +6,8 @@ from  auto_data_table import file_operations
 from auto_data_table.meta_operations import MetaDataStore, TempLog
 from auto_data_table.prompt_execution import prompt_execution
 from auto_data_table.prompt_execution import prompt_parser 
-
+from auto_data_table.database_lock import DatabaseLock
+# does delete work for temp instances??
 
 # write to temp files
 def _update_table_columns(columns: list, table_name: str, db_dir: str, replace: bool = True) -> list[str]:
@@ -31,16 +32,17 @@ def _get_restart_data(operation:str, logs:MetaDataStore, table_name:str,
     else:
         restarts = []
     restarts.append(restart_time)
-    logs.add_restart_time(operation, restart_time, table_name)
+    #logs.add_restart_time(operation, restart_time, table_name)
 
     return temp_logs[table_name], start_time, restarts
 
-def setup_table(table_name: str, db_dir: str, author: str, replace: bool = False):
-    lock = file_operations.lock_database(db_dir)
+def setup_table(table_name: str, db_dir: str, author: str, replace: bool = False, allow_multiple: bool = True):
+    lock = DatabaseLock(table_name, db_dir)
+    lock.acquire_exclusive_lock()
     start_time = int(time.time())
     logs = MetaDataStore(db_dir)
     logs.write_to_temp_log(operation = 'start_setup_table', table_name = table_name,
-                           author = author, start_time = start_time, data = {'replace': replace}
+                           author = author, start_time = start_time, data = {'replace': replace, 'allow_multiple': allow_multiple}
                            ) # TODO: Start Operation
     if not replace and table_name in logs.get_all_tables():
         replace = False
@@ -52,15 +54,16 @@ def setup_table(table_name: str, db_dir: str, author: str, replace: bool = False
                            )
     if not replace:
         logs.write_to_setup_table_log(table_name = table_name, author = author, 
-                                  start_time = start_time, executed = False)
+                                  start_time = start_time, executed = False, allow_multiple = None)
     else:
-        file_operations.setup_table_folder(table_name, db_dir)
+        file_operations.setup_table_folder(table_name, db_dir, allow_multi=allow_multiple)
         logs.write_to_setup_table_log(table_name = table_name, author = author, 
-                                    start_time = start_time, executed = True)
-    file_operations.unlock_database(lock)
+                                    start_time = start_time, executed = True, allow_multiple= allow_multiple)
+    lock.release_exclusive_lock()
     return replace
 
 def restart_setup_table(table_name: str, db_dir: str, author: str):
+    #TODO: add locks???
     restart_time = int(time.time())
     logs = MetaDataStore(db_dir)
     # get all the restarts
@@ -76,46 +79,53 @@ def restart_setup_table(table_name: str, db_dir: str, author: str):
                             data = {'replace': replace_}
                             )
     else:
-        replace_ = temp_logs['check_setup_table' ][0].data['replace']
-    
+        replace_ = temp_logs['check_setup_table' ].data['replace']
     if replace_:
         file_operations.setup_table_folder(table_name, db_dir)
     logs.write_to_setup_table_log(table_name = table_name, author = author, 
                                   start_time = start_time, restarts = restarts, executed = replace)
     return replace
 
-def setup_table_instance(table_name: str, db_dir: str, author: str, 
-                         prev_time_id: Optional[int] = None,
+def setup_table_instance(table_id: str, table_name: str, db_dir: str, author: str, 
+                         prev_name_id: Optional[str] = None,
                          prompts: list[str] = [],
                          gen_prompt: str = ''):
     
     if len(prompts) != 0 and gen_prompt not in prompts:
         raise ValueError('Need to Define gen_prompt')
-    lock = file_operations.lock_table(table_name, db_dir)
+    
+    if prev_name_id != None:
+        prev_lock = TableLock(table_name, db_dir, prev_name_id)
+        prev_lock.acquire_read_lock()
+    lock = TableLock(table_name, db_dir, table_id)
+    lock.acquire_write_lock()
     start_time = int(time.time())
     logs = MetaDataStore(db_dir)
     logs.write_to_temp_log(operation = 'start_setup_table_instance', table_name = table_name,
                            author = author, start_time = start_time, 
-                           data = {'prev_time_id': prev_time_id, 
+                           data = {'prev_name_id': prev_name_id, 
                                    'prompts': prompts, 'gen_prompt':gen_prompt}
                            )
-    file_operations.setup_temp_table(table_name, db_dir, prev_time_id, prompts, gen_prompt) 
-    logs.write_to_setup_instance_log(table_name = table_name, prev_time_id = prev_time_id,
+    file_operations.setup_temp_table(table_name, db_dir, prev_name_id, prompts, gen_prompt) 
+    logs.write_to_setup_instance_log(table_name = table_name, prev_name_id = prev_name_id,
                                    author = author, 
                                   start_time = start_time, prompts=prompts)
-    lock.release()
+    lock.release_write_lock()
+    if prev_name_id != None:
+        prev_lock.release_read_lock()
 
 def restart_setup_table_instance(table_name: str, db_dir: str, author: str):
     restart_time = int(time.time())
     logs = MetaDataStore(db_dir)
     temp_logs, start_time, restarts  = _get_restart_data('start_setup_table_instance', logs, table_name, restart_time)
-    prev_time_id = temp_logs['start_setup_table_instance'].data['prev_time_id']
+    prev_name_id = temp_logs['start_setup_table_instance'].data['prev_name_id']
     prompts = temp_logs['start_setup_table_instance'].data['prompts']
     gen_prompt = temp_logs['start_setup_table_instance'].data['gen_prompt']
-    file_operations.setup_temp_table(table_name, db_dir, prev_time_id, prompts, gen_prompt) 
-    logs.write_to_setup_table_log(table_name = table_name, prev_time_id = prev_time_id,
-                                   author = author, start_time = start_time, restarts = restarts,
-                                   prompts=prompts)
+    file_operations.setup_temp_table(table_name, db_dir, prev_name_id, prompts, gen_prompt) 
+
+    logs.write_to_setup_instance_log(table_name = table_name, prev_name_id = prev_name_id,
+                                   author = author, 
+                                  start_time = start_time, prompts=prompts, restarts=restarts)
     
 
 def delete_table(table_name: str, db_dir: str, author: str, time_id: Optional[int]):
