@@ -32,9 +32,12 @@ def setup_database(db_dir: str, replace: bool = False) -> None:
         json.dump({}, file)  
     
     with open(os.path.join(meta_dir, 'tables_history.json'), "w") as file:
-        json.dump({}, file)  
+        json.dump({}, file) 
+    
+    with open(os.path.join(meta_dir, 'tables_status.json'), "w") as file:
+        json.dump({}, file) 
 
-def setup_temp_table(table_name: str, db_dir: str, prev_name_id: Optional[str] = None,
+def setup_temp_table(table_name: str, db_dir: str, prev_name_id: Optional[str] = None, prev_start_time:float = None,
                      prompts: list[str] = [], temp_name: Optional[str] = None,
                     gen_prompt: str = '') -> None:
     
@@ -64,6 +67,7 @@ def setup_temp_table(table_name: str, db_dir: str, prev_name_id: Optional[str] =
         with open(metadata_path, 'r') as file:
             metadata = yaml.safe_load(file)
         metadata['origin'] = prev_name_id
+        metadata['prev_start_time'] = prev_start_time
         with open(metadata_path, 'w') as file:
             yaml.safe_dump(metadata, file)
     
@@ -87,14 +91,7 @@ def setup_temp_table(table_name: str, db_dir: str, prev_name_id: Optional[str] =
         with open(metadata_path, 'w') as file:
             pass
 
-def get_table_status(table_name, db_dir):
-    table_dir = os.path.join(db_dir, table_name)
-    meta_path = os.path.join(table_dir, 'metadata.yaml')
-    with open(meta_path, 'r') as f:
-        metadata = yaml.safe_load(f)
-    return metadata['allow_multiple_versions']
-
-def setup_table_folder(table_name: str, db_dir: str, allow_multi:bool) -> None:
+def setup_table_folder(table_name: str, db_dir: str) -> None:
     if not table_name.isalnum():
         raise ValueError('Table Name Needs To Be Alphanumeric')
     if table_name == 'DATABASE' or table_name == 'TABLE':
@@ -107,22 +104,16 @@ def setup_table_folder(table_name: str, db_dir: str, allow_multi:bool) -> None:
     os.makedirs(table_dir)
     prompt_dir = os.path.join(table_dir, 'prompts')
     os.makedirs(prompt_dir)
-    metadata = {}
-    metadata['allow_multiple_versions'] = allow_multi
-    meta_path = os.path.join(table_dir, 'metadata.yaml')
-    with open(meta_path, 'w') as f:
-        yaml.safe_dump(metadata, f)
 
 
-def materialize_table(table_id:str, table_name:str, db_dir: str) -> int:
+def materialize_table(instance_id: str, temp_instance_id:str, table_name:str, db_dir: str):
     table_dir = os.path.join(db_dir, table_name)
-    temp_dir = os.path.join(table_dir, 'TEMP')
+    temp_dir = os.path.join(table_dir, temp_instance_id)
     if not os.path.exists(temp_dir):
         raise ValueError("No Table In Progress")
         
-    new_dir = os.path.join(table_dir, table_id)
+    new_dir = os.path.join(table_dir, instance_id)
     os.rename(temp_dir, new_dir)
-    return table_id
 
 def delete_lock(table_name: str, db_dir: str, table_id:Optional[str] = None):
     if table_id == None:
@@ -135,69 +126,29 @@ def delete_lock(table_name: str, db_dir: str, table_id:Optional[str] = None):
             os.remove(lock_dir)
 
 
-def delete_table(table_name: str, db_dir: str, table_id: Optional[str] = None):
+def delete_table(table_name: str, db_dir: str, instance_id: Optional[str] = None):
     table_dir = os.path.join(db_dir, table_name)
-    if table_id != None:
-        table_dir = os.path.join(table_dir, str(table_id))
+    if instance_id != None:
+        table_dir = os.path.join(table_dir, str(instance_id))
     if os.path.isdir(table_dir):
         shutil.rmtree(table_dir)
 
 # get table
-def get_table(table_id: str, table_name: str, db_dir: str, rows: Optional[int] = None) -> pd.DataFrame:
+def get_table(instance_id: str, table_name: str, db_dir: str, rows: Optional[int] = None) -> pd.DataFrame:
     table_dir = os.path.join(db_dir, table_name)
-    table_dir = os.path.join(table_dir, table_id)
+    table_dir = os.path.join(table_dir, instance_id)
     table_dir = os.path.join(table_dir, 'table.csv')
     try:
         df = pd.read_csv(table_dir, nrows=rows) 
         return df
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
-     
-def get_prompt(table_id:str, name: str, table_name: str, db_dir: str) -> dict:
-    table_dir = os.path.join(db_dir, table_name)
-    table_dir = os.path.join(table_dir, table_id)
-    meta_path = os.path.join(table_dir, 'prompts')
-    meta_path = os.path.join(meta_path, f'{name}.yaml')
-    with open(meta_path, 'r') as file:
-        return yaml.safe_load(file)
 
-def write_table(df: pd.DataFrame, table_id:str, table_name: str, db_dir: str) -> None:
-    if 'pos_index' in df.columns:
-        df.drop(columns="pos_index", inplace=True)
-    table_dir = os.path.join(db_dir, table_name)
-    table_dir = os.path.join(table_dir, table_id)
-    table_dir = os.path.join(table_dir, 'table.csv')
-    df = df.to_csv(table_dir, index=False)
 
-def write_prompt(name: str, prompt: dict, table_name: str, db_dir: str) -> None:
+def get_prompts(instance_id: str, table_name:str, db_dir: str) -> dict[str, Any]:
     table_dir = os.path.join(db_dir, table_name)
-    table_dir = os.path.join(table_dir, 'TEMP')
-    meta_path = os.path.join(table_dir, 'prompts')
-    meta_path = os.path.join(meta_path, f'{name}.yaml')
-    with open(meta_path, 'w') as file:
-        yaml.safe_dump(prompt, file)
-
-def get_table_versions(db_dir: str) -> dict[str, list[int]]:
-    versions = {}
-    for tname in os.listdir(db_dir):
-        tpath_ = os.path.join(db_dir, tname)
-        if tname != 'metadata' and os.path.isdir(tpath_):
-            for vname in os.listdir(tpath_):
-                vpath_ = os.path.join(tpath_, vname)
-                if os.path.isdir(vpath_) and str.isdigit(vname):
-                    if tname not in versions:
-                        versions[tname] = []
-                    versions[tname].append(vname)
-    return versions
-                        
-
-def get_prompts(table_name:str, db_dir: str, time_id: Optional[int] = None) -> dict[str, Any]:
-    table_dir = os.path.join(db_dir, table_name)
-    if time_id != None:
-        temp_dir = os.path.join(table_dir, time_id)
-    else:
-        temp_dir = os.path.join(table_dir, 'TEMP')
-    prompt_dir = os.path.join(temp_dir, 'prompts')
+    instance_dir = os.path.join(table_dir, instance_id)
+    prompt_dir = os.path.join(instance_dir, 'prompts')
     prompts = {}
     for item in os.listdir(prompt_dir):
         if item.endswith('.yaml'):
@@ -205,12 +156,14 @@ def get_prompts(table_name:str, db_dir: str, time_id: Optional[int] = None) -> d
             prompt_path = os.path.join(prompt_dir, item)
             with open(prompt_path, 'r') as file:
                 prompt = yaml.safe_load(file)
-                prompt['name'] = name
             prompts[name] = prompt
     return prompts
 
-def check_folder(table_name:str, db_dir: str, time_id: Optional[int] = None) -> bool:
+def write_table(df: pd.DataFrame, instance_id:str, table_name: str, db_dir: str) -> None:
+    if 'pos_index' in df.columns:
+        df.drop(columns="pos_index", inplace=True)
     table_dir = os.path.join(db_dir, table_name)
-    if time_id != None:
-        table_dir = os.path.join(table_dir, str(time_id))
-    return os.path.exists(table_dir)
+    table_dir = os.path.join(table_dir, instance_id)
+    table_dir = os.path.join(table_dir, 'table.csv')
+    df = df.to_csv(table_dir, index=False)
+

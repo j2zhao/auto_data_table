@@ -5,8 +5,9 @@ from dataclasses_json import dataclass_json
 from typing import Optional, Union, Any, Dict
 import time
 from filelock import FileLock
+import uuid
 
-#TODO: Maybe I don't need the dataclass ! -> 
+#TODO: there is an edge case where i might write to log twice -> Okay for now
 
 
 @dataclass_json
@@ -17,52 +18,57 @@ class ProcessLog():
     log_time: float
     table_name: str
     restarts: list[tuple[str, float]]
-
-@dataclass_json
-@dataclass
-class SetupTableLog(ProcessLog): # DONE 
-    executed: bool
-    allow_multiple: bool
-
-@dataclass_json
-@dataclass
-class SetupTableInstanceLog(ProcessLog): # DONE
-    prev_instance_id: str
-    prompts: list[str]
-
-@dataclass_json
-@dataclass
-class ExecuteTableLog(ProcessLog):
-    instance_id: str
-    materialization_time: float
-    changed_columns: list[str]
-    all_columns: list[str]
-
-@dataclass_json
-@dataclass
-class FailedExecuteLog(ProcessLog): #TODO
-    failure: str
-
-@dataclass_json
-@dataclass
-class DeleteTableLog(ProcessLog): # DONE
-    instance_id: str
-
-@dataclass_json
-@dataclass
-class RestartDatabaseLog(ProcessLog): 
-    finished_processes: list[str] # list of process ids?
-
-@dataclass_json
-@dataclass
-class ActiveProcessLog():
     operation: str
-    logs: dict[str, Any] # list of operation names
+    complete_steps: list[tuple[str, float]]
+    data: dict[str, Any]
+
+# @dataclass_json
+# @dataclass
+# class SetupTableLog(ProcessLog): # DONE 
+#     executed: bool
+#     allow_multiple: bool
+
+# @dataclass_json
+# @dataclass
+# class SetupTableInstanceLog(ProcessLog): # DONE
+#     prev_instance_id: str
+#     prompts: list[str]
+
+# @dataclass_json
+# @dataclass
+# class ExecuteTableLog(ProcessLog):
+#     instance_id: str
+#     materialization_time: float
+#     changed_columns: list[str]
+#     all_columns: list[str]
+
+# @dataclass_json
+# @dataclass
+# class FailedExecuteLog(ProcessLog): #TODO
+#     failure: str
+
+# @dataclass_json
+# @dataclass
+# class DeleteTableLog(ProcessLog): # DONE
+#     instance_id: str
+
+# @dataclass_json
+# @dataclass
+# class RestartDatabaseLog(ProcessLog): 
+#     finished_processes: list[str] # list of process ids?
+
+# @dataclass_json
+# @dataclass
+# class ActiveProcessLog(ProcessLog):
+#     operation: str
+#     complete_steps: list[str]
+#     data: dict[str, Any] # {sub_operation: {data_name: data}}
 
 
-ColumnHistoryDict = dict[str, dict[str, dict[str, float]]]
+ColumnHistoryDict = dict[str, dict[str, dict[str, dict[str, float]]]]
 TableHistoryDict = dict[str, dict[str, float]]
-ActiveProcessDict = Dict[str, ActiveProcessLog]
+TableStatusDict = dict[str, bool]
+ActiveProcessDict = Dict[str, ProcessLog]
 
 def _serialize_active_log(temp_logs: ActiveProcessDict) -> dict:
     serialized_logs = {
@@ -73,7 +79,7 @@ def _serialize_active_log(temp_logs: ActiveProcessDict) -> dict:
 
 def _deserialize_active_log(serialized_logs: dict) -> ActiveProcessDict:
     deserialized_dict = {
-                key: ActiveProcessLog.from_dict(value)  # Convert dictionary back to dataclass object
+                key: ProcessLog.from_dict(value)  # Convert dictionary back to dataclass object
                 for key, value in serialized_logs.items()
     }
     return deserialized_dict
@@ -91,12 +97,12 @@ class MetaDataStore:
     
     def _save_table_history(self, table_history: TableHistoryDict):
         with open(self.table_history_file, 'w') as f:
-            json.dump(table_history, f, indent=4)
-
-    def _save_logs(self, entry: dict):
-        with open(self.log_file, 'a') as file:
-            file.write(json.dumps(entry) + '\n')
+            json.dump(table_history, f, indent=4)        
     
+    def _save_table_status(self, table_status: TableStatusDict):
+        with open(self.table_status_file, 'w') as f:
+            json.dump(table_status, f, indent=4)  
+
     def _get_active_log(self) -> ActiveProcessDict: 
         with open(self.active_file, 'r') as file:
             data = json.load(file)
@@ -112,6 +118,21 @@ class MetaDataStore:
         with open(self.table_history_file, 'r') as file:
             table_history = json.load(file)
             return table_history
+    
+    def _get_table_status(self) -> TableStatusDict:
+        with open(self.table_status_file, 'r') as file:
+            table_status = json.load(file)
+            return table_status
+    
+    def _write_to_log(self, log_entry: ProcessLog) -> None:
+        process_id = log_entry.process_id
+        self._update_process_internal(process_id, operation = 'write_log')
+        log_entry.log_time = time.time()
+        log_entry = asdict(log_entry)
+        with open(self.log_file, 'a') as file:
+            file.write(json.dumps(log_entry) + '\n')
+        self._delete_process_internal(process_id)
+        
 
     def __init__(self, db_dir: str) -> None:
         self.db_dir = db_dir
@@ -119,163 +140,216 @@ class MetaDataStore:
         self.log_file = os.path.join(meta_dir, 'log.txt')
         self.column_history_file = os.path.join(meta_dir, 'columns_history.json')
         self.table_history_file = os.path.join(meta_dir, 'tables_history.json')
+        self.table_status_file = os.path.join(meta_dir, 'tables_status.json')
         self.active_file = os.path.join(meta_dir, 'active_log.json')
         meta_lock = os.path.join(meta_dir, 'LOG.lock') 
         self.lock = FileLock(meta_lock)
-               
-        
-    def write_to_setup_table_log(self, author:str, start_time:float, table_name:str,
-                                   executed:bool, restarts: list[float] = []) -> None:
-        with self.lock:
-            if executed:
-                columns_history = self._get_column_history()
-                columns_history[table_name] = {} 
-                self._save_column_history(columns_history)
-                table_history = self._get_table_history()
-                table_history[table_name] = {}
-                self._save_table_history(table_history)
-            op_time = time.time()
-            log = SetupTableLog(author, start_time, op_time, table_name, restarts, executed)
-            self.write_to_log(log_entry = LogEntry("SetupTableLog", log))
 
-
-    def write_to_setup_instance_log(self, author: str, start_time:float, table_name:str, 
-                                  prev_name_id: Optional[str], 
-                                  prompts: list[str],
-                                  restarts: list[float] = [] ) -> None:
-        with self.lock:
-            op_time = time.time()
-            log = SetupTableInstanceLog(author, start_time, op_time, table_name, restarts, prev_name_id, prompts)
-            self.write_to_log(log_entry = LogEntry("SetupTableInstanceLog", log))
-
-    def write_to_execute_table_log(self,author: str, start_time:float, table_name:str, table_id: str, 
-                                   table_time:float,
-                                   changed_columns: list[str], all_columns: list[str], 
-                                   restarts: list[float] = []):
-        with self.lock:
-            table_history = self._get_table_history()
-            table_history[table_name][table_id] = table_time
-            self._save_table_history(table_history)
+    def _setup_table_operation(self, log: ProcessLog) -> None:
+        executed = log.data['executed']
+        if executed:
+            table_name = log.table_name
             columns_history = self._get_column_history()
-            for column in changed_columns:
-                if column not in columns_history[table_name]:
-                    columns_history[table_name][column] = {}
-                columns_history[table_name][column][table_id] = table_time
+            columns_history[table_name] = {} 
             self._save_column_history(columns_history)
-            op_time = time.time()
-            log = ExecuteTableLog(author,start_time, op_time, table_name, restarts, table_time,
-                                  table_id,
-                                  changed_columns, all_columns)
-            self.write_to_log(log_entry = LogEntry("ExecuteTableLog", log))
+            table_history = self._get_table_history()
+            table_history[table_name] = {}
+            self._save_table_history(table_history)
+            table_status = self._get_table_status()
+            table_status[table_name] = log.data['status']
+            self._save_table_status(table_status)
 
-    def write_to_delete_table_log(self,author: str, start_time:float, table_name:str, 
-                                  table_id:str = None,  restarts: list[float] = []) -> None:
-        with self.lock:     
-            if table_id == None:
-                table_history = self._get_table_history()
-                del table_history[table_name]
-                self._save_table_history(table_history)
-                column_history = self._get_column_history()
-                del column_history[table_name]
-                self._save_column_history(table_name)
+    def _setup_instance_operation(self, log: ProcessLog) -> None:
+        "Nothing happens -> temp instance shouldn't impact metadata"
+        pass
+
+    def _delete_table_operation(self, log: ProcessLog) -> None:
+        table_name = log.table_name
+        table_history = self._get_table_history()
+        if table_name in table_history:
+            del table_history[table_name]
+        self._save_table_history(table_history)
+        column_history = self._get_column_history()
+        if table_name in column_history:
+            del column_history[table_name]
+        self._save_column_history(table_name)
+        table_status = self._get_table_status()
+        if table_name in table_status:
+            del table_status[table_name]
+        self._save_table_status(table_status)
+
+    def _delete_instance_operation(self, log: ProcessLog) -> None:
+        table_history = self._get_table_history()
+        column_history = self._get_column_history()
+        instance_id = log.data['instance_id']
+        table_name = log.table_name
+        if instance_id in table_history[table_name]:
+            del table_history[table_name][instance_id]
+        if instance_id in column_history[table_name]:
+            del column_history[table_name][instance_id]
+        self._save_table_history(table_history)
+        self._save_column_history(column_history)
+
+    def _execute_operation(self, log: ProcessLog) -> None:
+        table_name = log.table_name
+        table_time = log.data['table_start_time']
+        instance_id = log.data['instance_id']
+        changed_columns = log.data['changed_columns']
+        all_columns = log.data['all_columns']
+        prev_instance_id = log.data['prev_instance_id']
+        table_history = self._get_table_history()
+        table_history[table_name][instance_id] = table_time
+        self._save_table_history(table_history)
+        columns_history = self._get_column_history()
+        columns_history[table_name][instance_id] = {}
+        for column in all_columns:
+            if column in changed_columns:
+                columns_history[table_name][instance_id][column] = table_time
             else:
-                table_history = self._get_table_history()
-                column_history = self._get_column_history()
-                if table_id in table_history[table_name]:
-                    del table_history[table_name][table_id]
-                for col in column_history[table_name]:
-                    if table_id in column_history[table_name][col]:
-                        del column_history[table_name][col][table_id]
-                self._save_table_history(table_history)
-                self._save_column_history(column_history)
-            op_time = time.time()
-            log = DeleteTableLog(author, start_time, op_time, table_name, restarts, table_id)
-            self.write_to_log(log_entry = LogEntry("DeleteTableLog", log))
-             
-            
-    def write_to_failed_log(self, author: str, start_time:float, table_name:str, 
-                            failure: str,  restarts: list[float] = []) -> None:
-        with self.lock:
-            op_time = time.time()
-            log = FailedExecuteLog(author, start_time, op_time, table_name, restarts, failure)
-            self.write_to_log(log_entry = LogEntry("FailedExecuteLog", log)) 
+                columns_history[table_name][instance_id][column] = columns_history[table_name][prev_instance_id][column]
+        self._save_column_history(columns_history)
 
+    def _restart_operation(self, log: ProcessLog) -> None:
+        "Nothing Happens For Now"
+        pass
 
-    def write_to_restart_db_log(self, author: str, start_time:float, in_progress_tables:list[str]
-                                ) -> None:
+    def write_to_log(self, process_id):
+        #TODO: implement failure recovery????
         with self.lock:
-            op_time = time.time()
-            table_name = 'DATABASE'
-            restarts = []
-            log = RestartDatabaseLog(author, start_time, op_time, table_name, restarts, in_progress_tables)
-            self.write_to_log(log_entry = LogEntry("RestartDatabaseLog", log)) 
-
-    def write_to_log(self, log_entry: Union[LogEntry, dict]) -> None:
+            log = self._get_active_log()[process_id]
+            if log.operation == 'setup_table':
+                self._setup_table_operation(log)
+            elif log.operation == 'setup_table_instance':
+                self._setup_instance_operation(log)
+            elif log.operation == 'delete_table':
+                self._delete_table_operation(log)
+            elif log.operation == 'delete_table_instance':
+                self._delete_instance_operation(log)
+            elif log.operation == 'execution_table_instance':
+                self._execute_operation(log)
+            elif log.operation == 'restart_db':
+                self._restart_operation(log)
+            else:
+                raise NotImplementedError()
+            self._write_to_log(log)
+    
+    def start_new_process(self, operation: str, table_name:str) -> float:
         with self.lock:
-            if isinstance(log_entry, LogEntry):
-                log_entry = asdict(log_entry)
-            author = log_entry['log']['author']
-            start_time = log_entry['log']['start_time']
-            table_name = log_entry['log']['table_name']
-            self.write_to_temp_log(operation = 'write_final_log', table_name = table_name,
-                           author = author, start_time = start_time, data = {'log':log_entry}
-                           )
-            self._save_logs(log_entry)
-            temp_logs = self._get_temp_logs()
-            del temp_logs[table_name]
-            self._save_temp_logs(temp_logs)
-
-    def start_new_process(self, process_id:str, operation: str, table_name:str) -> float:
-        with self.lock:
-            active_processes = self._get_processes()
+            process_id = str(uuid.uuid4())
+            active_processes = self._get_active_log()
             start_time = time.time()
             restarts = []
-            active_processes[process_id] = ActiveProcessLog(process_id, start_time, start_time, table_name, restarts, operation, {})
+            active_processes[process_id] = ProcessLog(process_id, start_time, start_time, table_name, restarts, operation, {})
             self._save_active_log(active_processes)
-    # def write_to_temp_log(self, process_id:str, author: str, start_time:float,
-    #                       operation:str, data: dict[str, Any] = {}, table_name = 'DATABASE'):
-    #     with self.lock:
-    #         temp_logs = self._get_temp_logs()
-    #         if table_name not in temp_logs:
-    #             temp_logs[table_name] = {}
-    #         op_time = time.time()
-    #         restarts= []
-    #         log = TempLog(author, start_time, op_time, table_name, restarts, operation, data)
-    #         if process_id not in temp_logs[table_name]:
-    #             temp_logs[table_name][process_id] = {}
-    #         temp_logs[table_name][process_id][operation] = log
-    #         self._save_temp_logs(temp_logs)
-        return start_time
-
+            return process_id, start_time
     
+    def update_process_data(self, process_id:str, data:dict):
+        with self.lock:
+            active_processes = self._get_active_log()
+            active_processes[process_id].data.update(data)
+            self._save_active_log(active_processes)
+    
+    def _update_process_internal(self,  process_id:str, step: str):
+        active_processes = self._get_active_log()
+        active_processes[process_id].complete_steps.append(step)
+        self._save_active_log(active_processes)
+    
+    def update_process_step(self, process_id:str, step: str):
+        with self.lock:
+            self._update_process_internal(process_id, step)
+    
+    def update_process_restart(self, author:str, process_id:str):
+        with self.lock:
+            restart_time = time.time()
+            active_processes = self._get_active_log()
+            active_processes[process_id].restarts.append((author, restart_time))
+            data = active_processes[process_id].data
+            steps = active_processes[process_id].complete_steps
+            self._save_active_log(active_processes)
+        return data, steps
+    
+    def _delete_process_internal(self, process_id: str):
+        active_processes = self._get_active_log()
+        del active_processes[process_id]
+        self._save_active_log(active_processes)
+
+    def delete_active_process(self, process_id: str):
+        with self.lock:
+            self._delete_process_internal(process_id)
+        
     def get_all_tables(self) -> list[str]:
         with self.lock:
             tables = list[self._get_table_history().keys()]
         return tables
 
-    def get_last_table_update(self, table_name:str, before_time: Optional[int] = None) -> int:
+    def _get_status_internal(self, table_name):
+        table_status = self._get_table_status()
+        return table_status[table_name]
+    
+    def get_table_status(self, table_name:str):
+        with self.lock:
+            return self._get_status_internal(table_name)
+
+    def get_table_version_update(self, instance_id:str, table_name:str,
+                                 before_time: Optional[int] = None):
         with self.lock:
             table_history = self._get_table_history() 
-        max_t = 0
-        max_id = None
-        for table_id, t in table_history[table_name].items():
-            if t >= max_t and (before_time == None or t < before_time):
-                max_t = t
-                max_id = table_id
-        return max_id
+            vtime =  table_history[table_name][instance_id]
+            if vtime < before_time:
+                return vtime
+            else:
+                return 0
+
+    def get_column_version_update(self, column_name, instance_id:str, table_name:str,
+                                  before_time: Optional[int] = None):
+        with self.lock:
+            column_history = self._get_column_history() 
+            vtime = column_history[table_name][instance_id][column_name]
+            if vtime < before_time:
+                return vtime
+            else:
+                return 0
+   
+    def get_last_table_update(self, table_name:str, before_time: Optional[int] = None) -> Union[int, str]:
+        '''
+        Returns 0 when we didn't find any tables that meet conditions.
+        Return -1 when the table was last updated after before_times and it can only have one active version.
+        '''
+        with self.lock:
+            table_history = self._get_table_history() 
+            #table_status = self._get_table_status()[table_name]
+            max_t = 0
+            max_id = 0
+            for instance_id, t in table_history[table_name].items():
+                #if not table_status and t >= before_time:
+                #    return -1
+                if t > max_t and (before_time == None or t < before_time):
+                    max_t = t
+                    max_id = instance_id
+            return max_t, max_id
     
     def get_last_column_update(self, table_name:str, column:str, before_time: Optional[int] = None) -> int:
+        '''
+        Returns 0 when we didn't find any tables that meet conditions.
+        Return -1 when the table was last updated after before_times and it can only have one active version.
+        '''
         with self.lock:
             columns_history = self._get_column_history()
-        max_t = 0
-        max_id = None
-        for table_id, t in columns_history[table_name][column].items():
-            if t >= max_t and before_time == None or t < before_time:
-                max_t = t
-                max_id = table_id
-        return max_id
-    
+            #table_status = self._get_table_status()[table_name]
+            max_t = 0
+            max_id = 0
+            for table_id in columns_history[table_name][column]:
+                if column in columns_history[table_name][table_id]:
+                    t = columns_history[table_name][table_id][column]
+                    #if not table_status and t >= before_time:
+                    #    return -1
+                    if t >= max_t and (before_time == None or t < before_time):
+                        max_t = t
+                        max_id = table_id
+            return max_t, max_id
+
+
     def get_active_log(self) -> ActiveProcessDict:
         with self.lock:
-            temp_logs = self._get()
-            return temp_logs
+            active_logs = self._get_active_log()
+            return active_logs

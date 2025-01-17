@@ -9,7 +9,7 @@ from auto_data_table.prompt_execution import prompt_parser
 from auto_data_table.database_lock import DatabaseLock
 # does delete work for temp instances??
 
-# write to temp files
+# TODO: write to temp files
 def _update_table_columns(columns: list, table_name: str, db_dir: str, replace: bool = True) -> list[str]:
     df = file_operations.get_table(table_name, db_dir)
     for col in columns:
@@ -150,6 +150,7 @@ def restart_delete_table(table_name: str, db_dir: str, author: str):
                                    author = author, start_time = start_time, restarts = restarts)
 
 
+
 def execute_table(table_name: str, db_dir: str, author: str): # ADD LOGGING
     lock = file_operations.lock_table(table_name, db_dir)
     start_time = time.time()
@@ -161,7 +162,6 @@ def execute_table(table_name: str, db_dir: str, author: str): # ADD LOGGING
     metadata = prompts['metadata']
     del prompts['metadata']
     for name, prompt in prompts.items():
-        
         if 'parsed_changed_columns' not in prompt:
             prompt['parsed_changed_columns'] = prompt_parser.get_changed_columns(prompt) # need to deal with?
             file_operations.write_prompt(name, prompt, table_name, db_dir)

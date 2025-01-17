@@ -1,7 +1,8 @@
 import os
-from typing import Optional, Any, Callable
+from typing import Optional, Any, Callable, Union
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+import re
 
 from auto_data_table import file_operations
 from auto_data_table.prompt_execution import prompt_parser 
@@ -20,9 +21,8 @@ def load_function_from_file(file_path:str, function_name:str) -> tuple[Callable,
 
 
 
-def _execute_code_from_prompt(index: Optional[int], prompt:dict, funct:Callable,  cache: dict[str, pd.DataFrame],
-                              table_name:str) -> Any:
-    df = cache[table_name]
+def _execute_code_from_prompt(index: Optional[int], prompt:dict, funct:Callable,  cache: prompt_parser.Cache) -> Any:
+    df = cache['self']
     empty = False
     current_values = []
     for col in prompt['changed_columns']:
@@ -39,26 +39,38 @@ def _execute_code_from_prompt(index: Optional[int], prompt:dict, funct:Callable,
     #print(args)
     table_args = {} 
     if 'table_arguments' in prompt:
-        for table_name, table in prompt['table_arguments'].items():
-            table_args[table_name] = cache[table]
+        for tname, table in prompt['table_arguments'].items():
+            match = re.match(r"^(\w+)(?:\((\w+)\))?$", table)
+            table_name = match.group(1)
+            instance_id = match.group(2)
+            if instance_id != None:
+                table_key = table_name
+            else:
+                table_key = (table_name,instance_id)
+            table_args[tname] = cache[table_key]
     args = args | table_args
     results = funct(**args)
     return tuple(results)
 
-def _execute_single_code_from_prompt(prompt:dict, funct:Callable, cache: dict) -> None:
+def _execute_single_code_from_prompt(prompt:dict, funct:Callable, cache:  prompt_parser.Cache) -> None:
     args = prompt_parser.get_table_value(prompt['arguments'], None, cache)
     table_args = {} 
     if 'table_arguments' in prompt:
-        #(prompt['table_arguments'])
-        #raise ValueError()
         for tname, table in prompt['table_arguments'].items():
-            table_args[tname] = cache[table]
+            match = re.match(r"^(\w+)(?:\((\w+)\))?$", table)
+            table_name = match.group(1)
+            instance_id = match.group(2)
+            if instance_id != None:
+                table_key = table_name
+            else:
+                table_key = (table_name,instance_id)
+            table_args[tname] = cache[table_key]
     args = args | table_args
 
     results = funct(**args)
     return results
 
-def execute_code_from_prompt(prompt:Any, cache: dict[str, pd.DataFrame], 
+def execute_code_from_prompt(prompt:Any, cache:  prompt_parser.Cache,
                              table_name:str, db_dir:str) -> None:
     is_udf = prompt['is_udf']
     is_global = prompt['is_global']
@@ -76,18 +88,16 @@ def execute_code_from_prompt(prompt:Any, cache: dict[str, pd.DataFrame],
         code_file = os.path.join(code_file, code_file)
     
     funct, namespace = load_function_from_file(code_file, prompt_function)
-    df = cache[table_name]
+    df = cache['self']
     if is_udf:
-        indices = list(range(len(cache[table_name])))
+        indices = list(range(len(df)))
         with ThreadPoolExecutor(max_workers=n_threads) as executor: 
             results = list(
                 executor.map(
-                    lambda i: _execute_code_from_prompt(i, prompt, funct, cache, table_name),
+                    lambda i: _execute_code_from_prompt(i, prompt, funct, cache),
                     indices
                 )
             )
-            #print(results)
-            #for i in indices:
             for col, values in zip(prompt['changed_columns'], zip(*results)):
                 df[col] = values
     else:
@@ -97,7 +107,7 @@ def execute_code_from_prompt(prompt:Any, cache: dict[str, pd.DataFrame],
     file_operations.write_table(df, table_name, db_dir)
 
 
-def execute_gen_table_from_prompt(prompt:Any, cache: dict[str, pd.DataFrame], table_name:str, db_dir: str) -> None:
+def execute_gen_table_from_prompt(prompt:Any, cache: prompt_parser.Cache, instance_id:str, table_name:str, db_dir: str) -> None:
     is_global = prompt['is_global']
     code_file = prompt['code_file']
     prompt_function = prompt['function']
@@ -109,9 +119,8 @@ def execute_gen_table_from_prompt(prompt:Any, cache: dict[str, pd.DataFrame], ta
         code_file = os.path.join(code_file, code_file)
     
     funct, namespace = load_function_from_file(code_file, prompt_function)
-    df = cache[table_name]
     results = _execute_single_code_from_prompt(prompt, funct, cache)
-    columns = list(df.columns)
-    df = pd.merge(results, cache[table_name], how='left', on=prompt['changed_columns'])
+    columns = list(cache['self'].columns)
+    df = pd.merge(results, cache['self'], how='left', on=prompt['changed_columns'])
     df = df[columns]
-    file_operations.write_table(df, table_name, db_dir)
+    file_operations.write_table(df, instance_id, table_name, db_dir)

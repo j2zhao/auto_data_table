@@ -13,9 +13,9 @@ from auto_data_table.prompt_execution import llm_prompts
 
 
 def _execute_llm(index: int, prompt: dict, client: Optional[openai.OpenAI], 
-                 lock: threading.Lock, cache: dict[str, pd.DataFrame], 
-                 table_name:str, db_dir: str) -> None:
-    df = cache[table_name]
+                 lock: threading.Lock, cache: prompt_parser.Cache, 
+                 instance_id:str, table_name:str, db_dir: str) -> None:
+    df = cache['self']
     to_change = False
     for i, column in enumerate(prompt['changed_columns']):
         if df.at[index, column] == '':
@@ -85,12 +85,14 @@ def _execute_llm(index: int, prompt: dict, client: Optional[openai.OpenAI],
     with lock:
         for i, column in enumerate(prompt['changed_columns']):
             df.at[index, column]= results[i]
-        file_operations.write_table(df, table_name, db_dir)
+        file_operations.write_table(df, instance_id, table_name, db_dir)
 
-def execute_llm_from_prompt(prompt:dict, columns: list, cache: dict, n_threads: int,
-                            table_name:str, db_dir:str, time_id: Optional[int]) -> None:
+def execute_llm_from_prompt(prompt:dict, cache: prompt_parser.Cache,
+                            instance_id:str,
+                            table_name:str, db_dir:str) -> None:
     '''Only support OpenAI Thread prompts for now'''
     key_file =  prompt['open_ai_key']
+    n_threads = prompt['n_threads']
     
     with open(key_file, 'r') as f:
         secret = f.read()
@@ -100,6 +102,6 @@ def execute_llm_from_prompt(prompt:dict, columns: list, cache: dict, n_threads: 
     lock = threading.Lock()
     with ThreadPoolExecutor(max_workers=n_threads) as executor:
         executor.map(
-            lambda i: _execute_llm(i, prompt, client, lock, cache, table_name, db_dir),
+            lambda i: _execute_llm(i, prompt, client, lock, cache, instance_id, table_name, db_dir),
             indices
         )
