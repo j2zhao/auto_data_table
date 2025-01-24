@@ -104,8 +104,18 @@ class MultiLock:
         self.release_exclusive()
 
 
+def clean_up_locks(db_dir: str):
+    lock_path = os.path.join(db_dir, 'locks')
+    for root, _, files in os.walk(db_dir):
+        for file in files:
+            if file.endswith('.lock'):
+                file_ = os.path.join(root, file)
+                lock = MultiLock(file_)
+                lock.release_shared()
+                lock.release_exclusive()
+
 class DatabaseLock():
-    def __init__(self, db_dir: str,  table_name:Optional[str] = None, table_id:Optional[str] = None):
+    def __init__(self, db_dir: str,  table_name:Optional[str] = None, instance_id:Optional[str] = None):
         db_lock_dir = os.path.join(db_dir, 'locks', 'DATABASE.lock')
         self.db_lock = MultiLock(db_lock_dir)
         if table_name:
@@ -115,10 +125,10 @@ class DatabaseLock():
                 os.mkdir(table_lock_dir)
             table_lock_dir = os.path.join(table_lock_dir, 'TABLE.lock')
             self.table_lock = MultiLock(table_lock_dir)
-        if table_id:
-            instance_lock_dir = os.path.join(db_dir, 'locks', table_name, f'{table_id}.lock')
+        if instance_id:
+            instance_lock_dir = os.path.join(db_dir, 'locks', table_name, f'{instance_id}.lock')
             self.instance_lock = MultiLock(instance_lock_dir)
-        self.table_id = table_id
+        self.table_id = instance_id
         self.table_name = table_name
 
     def acquire_shared_lock(self, timeout=None, check_interval=0.1):

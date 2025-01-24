@@ -136,7 +136,7 @@ def _read_table_reference(ref:TableReference, index: Optional[int], cache: dict)
     if ref.instance_id != None:
         df = cache[(table, ref.instance_id)]
     else:
-        df = cache[(table)]
+        df = cache[table]
     conditions = {}
     if len(ref.key) == 0:
         conditions['index'] = index
@@ -144,7 +144,6 @@ def _read_table_reference(ref:TableReference, index: Optional[int], cache: dict)
         if isinstance(value, TableReference):
             value = _read_table_reference(value, index = index, cache = cache)
         conditions[condition] = value
-    
     query_str = ' & '.join([f'{k} == {repr(v)}' for k, v in conditions.items()])
     rows = df.query(query_str)
     result = rows[ref.column].to_list() 

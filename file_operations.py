@@ -37,19 +37,35 @@ def setup_database(db_dir: str, replace: bool = False) -> None:
     with open(os.path.join(meta_dir, 'tables_status.json'), "w") as file:
         json.dump({}, file) 
 
-def setup_temp_table(table_name: str, db_dir: str, prev_name_id: Optional[str] = None, prev_start_time:float = None,
-                     prompts: list[str] = [], temp_name: Optional[str] = None,
-                    gen_prompt: str = '') -> None:
-    
-    #TODO: conditions on naming temp (!)
-    if not temp_name:
-        temp_name = 'TEMP'
-    elif not temp_name.startswith('TEMP'):
+def clear_table_instance(instance_id:str, table_name:str, db_dir: str):
+    if not instance_id.startswith('TEMP'):
         raise ValueError('Temp folder name has to start with "TEMP"')
     table_dir = os.path.join(db_dir, table_name)
-    temp_dir = os.path.join(table_dir, temp_name)
+    temp_dir = os.path.join(table_dir, instance_id)
+    prompt_dir = os.path.join(temp_dir, 'prompts')
+    metadata_path = os.path.join(prompt_dir, 'metadata.yaml')
+    with open(metadata_path, 'r') as file:
+        metadata = yaml.safe_load(file) 
+    if 'origin' in metadata:
+        prev_dir = os.path.join(table_dir, metadata['origin'])
+        prev_table_path = os.path.join(prev_dir, 'table.csv')
+        shutil.copy2(prev_table_path, current_table_path)
+    else:
+        df = pd.DataFrame()
+        current_table_path = os.path.join(temp_dir, 'table.csv')
+        df.to_csv(current_table_path, index=False)
+
+
+def setup_table_instance(instance_id:str, table_name: str, db_dir: str, prev_name_id: Optional[str] = None, prev_start_time:float = None,
+                     prompts: list[str] = [],
+                    gen_prompt: str = '') -> None:
+    
+    if not instance_id.startswith('TEMP'):
+        raise ValueError('Temp folder name has to start with "TEMP"')
+    table_dir = os.path.join(db_dir, table_name)
+    temp_dir = os.path.join(table_dir, instance_id)
     if os.path.exists(temp_dir):
-        print(f"{temp_name} folder already exists for {table_name}")
+        print(f"{instance_id} folder already exists for {table_name}")
         shutil.rmtree(temp_dir)
     os.makedirs(temp_dir)
 
@@ -107,11 +123,13 @@ def setup_table_folder(table_name: str, db_dir: str) -> None:
 
 
 def materialize_table(instance_id: str, temp_instance_id:str, table_name:str, db_dir: str):
+    if os.path.exists(new_dir):
+        print('table already materialized')
+        return
     table_dir = os.path.join(db_dir, table_name)
     temp_dir = os.path.join(table_dir, temp_instance_id)
     if not os.path.exists(temp_dir):
         raise ValueError("No Table In Progress")
-        
     new_dir = os.path.join(table_dir, instance_id)
     os.rename(temp_dir, new_dir)
 

@@ -21,7 +21,7 @@ def load_function_from_file(file_path:str, function_name:str) -> tuple[Callable,
 
 
 
-def _execute_code_from_prompt(index: Optional[int], prompt:dict, funct:Callable,  cache: prompt_parser.Cache) -> Any:
+def _execute_code_from_prompt(index: int, prompt:prompt_parser.Prompt, funct:Callable,  cache: prompt_parser.Cache) -> tuple[Any]:
     df = cache['self']
     empty = False
     current_values = []
@@ -52,7 +52,8 @@ def _execute_code_from_prompt(index: Optional[int], prompt:dict, funct:Callable,
     results = funct(**args)
     return tuple(results)
 
-def _execute_single_code_from_prompt(prompt:dict, funct:Callable, cache:  prompt_parser.Cache) -> None:
+def _execute_single_code_from_prompt(prompt:prompt_parser.Prompt, funct:Callable, 
+                                     cache:  prompt_parser.Cache) -> Any:
     args = prompt_parser.get_table_value(prompt['arguments'], None, cache)
     table_args = {} 
     if 'table_arguments' in prompt:
@@ -70,7 +71,7 @@ def _execute_single_code_from_prompt(prompt:dict, funct:Callable, cache:  prompt
     results = funct(**args)
     return results
 
-def execute_code_from_prompt(prompt:Any, cache:  prompt_parser.Cache,
+def execute_code_from_prompt(prompt:prompt_parser.Prompt, cache:  prompt_parser.Cache,
                              table_name:str, db_dir:str) -> None:
     is_udf = prompt['is_udf']
     is_global = prompt['is_global']
@@ -107,7 +108,8 @@ def execute_code_from_prompt(prompt:Any, cache:  prompt_parser.Cache,
     file_operations.write_table(df, table_name, db_dir)
 
 
-def execute_gen_table_from_prompt(prompt:Any, cache: prompt_parser.Cache, instance_id:str, table_name:str, db_dir: str) -> None:
+def execute_gen_table_from_prompt(prompt:prompt_parser.Prompt, cache: prompt_parser.Cache, 
+                                  instance_id:str, table_name:str, db_dir: str) -> None:
     is_global = prompt['is_global']
     code_file = prompt['code_file']
     prompt_function = prompt['function']

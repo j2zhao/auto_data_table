@@ -1,5 +1,5 @@
-
-import pandas as pd
+import string
+import random
 import threading
 from typing import Optional
 import openai
@@ -23,7 +23,7 @@ def _execute_llm(index: int, prompt: dict, client: Optional[openai.OpenAI],
     if not to_change:
         return 
     # get open_ai file keys
-    name = prompt['name'] + str(index)
+    name = prompt['name'] + str(index) + ''.join(random.choice(string.ascii_letters) for _ in range(5))
     prompt['context_files'] = prompt_parser.get_table_value(prompt['context_files'], index,cache)
     prompt['context_msgs'] = prompt_parser.get_table_value(prompt['context_msgs'], index, cache)
     prompt['instructions'] = prompt_parser.get_table_value(prompt['instructions'], index,cache)

@@ -33,38 +33,41 @@ def get_table_value(item: Any, index: int, cache:dict[str, pd.DataFrame]) -> str
     return parse_obj_from_prompt(item, index, cache)
 
 
-def _topological_sort(items:list, dependencies:dict)-> list:
-    # Step 1: Build the graph and in-degree count
-    graph = {}
+def _topological_sort(items: list, dependencies: dict) -> list:
+    # Step 1: Build the graph based on child -> parent dependencies
     graph = {item: [] for item in items}
-    in_degree = {item: 0 for item in items}
-
-    in_degree = {item: 0 for item in items}
-    for item, deps in dependencies.items():
-        for dep in deps:
-            if dep not in graph:
-                graph[dep] = []
-            graph[dep].append(item)
-            in_degree[item] += 1
-    # Step 2: Initialize the queue with zero in-degree nodes
-    queue = deque([item for item in items if in_degree[item] == 0])
     
-    # Step 3: Process the graph
-    topo_order = []
-    while queue:
-        current = queue.popleft()
-        topo_order.append(current)
+    for child, parents in dependencies.items():
+        for parent in parents:
+            if parent not in graph:
+                graph[parent] = []  # Ensure parent exists in graph
+            graph[child].append(parent)  # Child points to its parents
 
-        for neighbor in graph[current]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
+    # Step 2: Perform DFS-based topological sorting
+    visited = set()  # To track visited nodes
+    visiting = set()  # To track the current recursion stack (for cycle detection)
+    sorted_order = []
 
-    # Step 4: Check for cycles
-    if len(topo_order) != len(items):
-        raise ValueError("Cycle detected! Topological sort not possible.")
-    return topo_order
+    def dfs(node):
+        if node in visiting:
+            raise ValueError("Cycle detected! Topological sort not possible.")
+        if node in visited:
+            return
 
+        visiting.add(node)  # Mark node as visiting
+        for parent in graph[node]:
+            dfs(parent)  # Visit parents first
+        visiting.remove(node)  # Remove from visiting
+        visited.add(node)  # Mark node as visited
+        sorted_order.append(node)  # Add node after processing parents
+
+    # Step 3: Apply DFS to all items
+    for item in items:
+        if item not in visited:
+            dfs(item)
+
+    # Reverse order to ensure parents come before children
+    return sorted_order[::-1]
 
 
 def parse_string(input_string):
@@ -95,11 +98,13 @@ def _parse_dependencies(prompts:dict[Prompt], table_generator:str,
 
         for dep in prompts[pname]['dependencies']:
             table, column, instance = parse_string(dep)
+            if instance == None:
+                latest = True
+            else:
+                latest = False
             if table == 'self':
-                for pn in prompts:
-                    if column in prompts[n]["parsed_changed_columns"]:
-                        internal_prompt_deps[pname].append(pn)
-            
+                internal_prompt_deps[pname].append(column) #TODO check this
+                continue
             elif not db_metadata.get_table_status(table) and instance != None:
                 raise ValueError(f"Table dependency ({table}, {column}, {instance}) for prompt {pname} doesn't have versions.")
             elif column != None:
@@ -116,7 +121,7 @@ def _parse_dependencies(prompts:dict[Prompt], table_generator:str,
                     instance, mat_time = db_metadata.get_last_table_update(table, start_time)   
                 if mat_time == 0:
                     raise ValueError('Table dependency ({table}, {column}, {instance}) for prompt {pname} not materialized at {start_time}')
-            external_deps[pname].add((table, column, instance, mat_time))
+            external_deps[pname].add((table, column, instance, mat_time, latest))
     return internal_prompt_deps, external_deps
 
 def parse_prompts(prompts: dict[Prompt], db_metadata: MetaDataStore , start_time:float,table_name:str, db_dir: str):
@@ -131,8 +136,6 @@ def parse_prompts(prompts: dict[Prompt], db_metadata: MetaDataStore , start_time
     internal_prompt_deps, external_deps = _parse_dependencies(prompts, metadata['table_generator'], start_time, db_metadata)
 
     top_pnames = _topological_sort(list(prompts.keys), internal_prompt_deps)
-    # TODO: get all columns
-    # TODO: get changed columns
     all_columns = []
     to_change_columns = []
     for pname in top_pnames[1:]:

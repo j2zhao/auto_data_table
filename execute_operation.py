@@ -3,6 +3,18 @@ import os
 from auto_data_table import table_operations
 from auto_data_table import file_operations
 
+
+#TODO: OPERATIONS
+# read current active log
+# create database
+# create table
+# create table instance
+# delete table
+# delete table instance
+# execute table
+# restart database
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="commandline for running things.")
     parser.add_argument("-db","--database", type=str)
