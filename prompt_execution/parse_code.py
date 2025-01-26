@@ -61,7 +61,7 @@ def _execute_single_code_from_prompt(prompt:prompt_parser.Prompt, funct:Callable
             match = re.match(r"^(\w+)(?:\((\w+)\))?$", table)
             table_name = match.group(1)
             instance_id = match.group(2)
-            if instance_id != None:
+            if instance_id == None:
                 table_key = table_name
             else:
                 table_key = (table_name,instance_id)
@@ -72,6 +72,7 @@ def _execute_single_code_from_prompt(prompt:prompt_parser.Prompt, funct:Callable
     return results
 
 def execute_code_from_prompt(prompt:prompt_parser.Prompt, cache:  prompt_parser.Cache,
+                             instance_id: str,
                              table_name:str, db_dir:str) -> None:
     is_udf = prompt['is_udf']
     is_global = prompt['is_global']
@@ -105,7 +106,7 @@ def execute_code_from_prompt(prompt:prompt_parser.Prompt, cache:  prompt_parser.
         results = _execute_single_code_from_prompt(prompt, funct, cache)
         for col, values in prompt['changed_columns']:
             df[col] = results[col]
-    file_operations.write_table(df, table_name, db_dir)
+    file_operations.write_table(df, instance_id, table_name, db_dir)
 
 
 def execute_gen_table_from_prompt(prompt:prompt_parser.Prompt, cache: prompt_parser.Cache, 
@@ -113,13 +114,12 @@ def execute_gen_table_from_prompt(prompt:prompt_parser.Prompt, cache: prompt_par
     is_global = prompt['is_global']
     code_file = prompt['code_file']
     prompt_function = prompt['function']
-
+    
     if is_global:
         code_file = os.path.join('./code_functions/', code_file)
     else:
         code_file = os.path.join(db_dir, 'code_functions')
         code_file = os.path.join(code_file, code_file)
-    
     funct, namespace = load_function_from_file(code_file, prompt_function)
     results = _execute_single_code_from_prompt(prompt, funct, cache)
     columns = list(cache['self'].columns)

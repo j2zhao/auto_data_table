@@ -132,11 +132,10 @@ def _split_top_level_list(s: str) -> list[str]:
 
 
 def _read_table_reference(ref:TableReference, index: Optional[int], cache: dict)-> Union[str, list[str]]:
-    table = ref.table
     if ref.instance_id != None:
-        df = cache[(table, ref.instance_id)]
+        df = cache[(ref.table, ref.instance_id)]
     else:
-        df = cache[table]
+        df = cache[ref.table]
     conditions = {}
     if len(ref.key) == 0:
         conditions['index'] = index

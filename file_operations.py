@@ -19,8 +19,8 @@ def setup_database(db_dir: str, replace: bool = False) -> None:
     meta_dir = os.path.join(db_dir, 'metadata')    
     os.makedirs(meta_dir)
 
-    meta_dir = os.path.join(db_dir, 'locks')    
-    os.makedirs(meta_dir)
+    lock_dir = os.path.join(db_dir, 'locks')    
+    os.makedirs(lock_dir)
 
     with open(os.path.join(meta_dir, 'log.txt'), "w") as file:
         pass
@@ -34,7 +34,7 @@ def setup_database(db_dir: str, replace: bool = False) -> None:
     with open(os.path.join(meta_dir, 'tables_history.json'), "w") as file:
         json.dump({}, file) 
     
-    with open(os.path.join(meta_dir, 'tables_status.json'), "w") as file:
+    with open(os.path.join(meta_dir, 'tables_multiple.json'), "w") as file:
         json.dump({}, file) 
 
 def clear_table_instance(instance_id:str, table_name:str, db_dir: str):
@@ -43,7 +43,7 @@ def clear_table_instance(instance_id:str, table_name:str, db_dir: str):
     table_dir = os.path.join(db_dir, table_name)
     temp_dir = os.path.join(table_dir, instance_id)
     prompt_dir = os.path.join(temp_dir, 'prompts')
-    metadata_path = os.path.join(prompt_dir, 'metadata.yaml')
+    metadata_path = os.path.join(prompt_dir, 'description.yaml')
     with open(metadata_path, 'r') as file:
         metadata = yaml.safe_load(file) 
     if 'origin' in metadata:
@@ -56,10 +56,9 @@ def clear_table_instance(instance_id:str, table_name:str, db_dir: str):
         df.to_csv(current_table_path, index=False)
 
 
-def setup_table_instance(instance_id:str, table_name: str, db_dir: str, prev_name_id: Optional[str] = None, prev_start_time:float = None,
+def setup_table_instance(instance_id:str, table_name: str, db_dir: str, prev_name_id: str = '', prev_start_time:float = 0,
                      prompts: list[str] = [],
                     gen_prompt: str = '') -> None:
-    
     if not instance_id.startswith('TEMP'):
         raise ValueError('Temp folder name has to start with "TEMP"')
     table_dir = os.path.join(db_dir, table_name)
@@ -72,9 +71,9 @@ def setup_table_instance(instance_id:str, table_name: str, db_dir: str, prev_nam
     # create or copy promtpts
     prompt_dir = os.path.join(temp_dir, 'prompts')
     current_table_path = os.path.join(temp_dir, 'table.csv')
-    metadata_path = os.path.join(prompt_dir, 'metadata.yaml')        
+    metadata_path = os.path.join(prompt_dir, 'description.yaml')        
     
-    if prev_name_id != None:
+    if prev_name_id != '':
         prev_dir = os.path.join(table_dir, str(prev_name_id))
         prev_prompt_dir = os.path.join(prev_dir, 'prompts')
         shutil.copytree(prev_prompt_dir, prompt_dir, copy_function=shutil.copy2)
@@ -108,9 +107,7 @@ def setup_table_instance(instance_id:str, table_name: str, db_dir: str, prev_nam
             pass
 
 def setup_table_folder(table_name: str, db_dir: str) -> None:
-    if not table_name.isalnum():
-        raise ValueError('Table Name Needs To Be Alphanumeric')
-    if table_name == 'DATABASE' or table_name == 'TABLE':
+    if table_name == 'DATABASE' or table_name == 'TABLE' or table_name == 'RESTART':
         raise ValueError(f'Special Name Taken: {table_name}.')
     table_dir = os.path.join(db_dir, table_name)
     if os.path.isdir(table_dir):
@@ -123,14 +120,14 @@ def setup_table_folder(table_name: str, db_dir: str) -> None:
 
 
 def materialize_table(instance_id: str, temp_instance_id:str, table_name:str, db_dir: str):
-    if os.path.exists(new_dir):
-        print('table already materialized')
-        return
     table_dir = os.path.join(db_dir, table_name)
     temp_dir = os.path.join(table_dir, temp_instance_id)
     if not os.path.exists(temp_dir):
         raise ValueError("No Table In Progress")
     new_dir = os.path.join(table_dir, instance_id)
+    if os.path.exists(new_dir):
+        print('Table already materialized')
+        return
     os.rename(temp_dir, new_dir)
 
 def delete_lock(table_name: str, db_dir: str, table_id:Optional[str] = None):

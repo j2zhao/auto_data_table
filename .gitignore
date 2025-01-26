@@ -1,3 +1,8 @@
+# open_ai key
+
+open_ai_key/key.txt
+test_database/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

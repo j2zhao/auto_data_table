@@ -6,6 +6,7 @@ from typing import Optional, Union, Any, Dict
 import time
 from filelock import FileLock
 import uuid
+import pprint
 
 #TODO: there is an edge case where i might write to log twice -> Okay for now
 
@@ -71,7 +72,7 @@ class ProcessLog():
 
 ColumnHistoryDict = dict[str, dict[str, dict[str, dict[str, float]]]]
 TableHistoryDict = dict[str, dict[str, float]]
-TableStatusDict = dict[str, bool]
+TableMultipleDict = dict[str, bool]
 ActiveProcessDict = Dict[str, ProcessLog]
 
 def _serialize_active_log(temp_logs: ActiveProcessDict) -> dict:
@@ -104,9 +105,9 @@ class MetaDataStore:
         with open(self.table_history_file, 'w') as f:
             json.dump(table_history, f, indent=4)        
     
-    def _save_table_status(self, table_status: TableStatusDict):
-        with open(self.table_status_file, 'w') as f:
-            json.dump(table_status, f, indent=4)  
+    def _save_table_multiple(self, table_multiples: TableMultipleDict):
+        with open(self.table_multiple_file, 'w') as f:
+            json.dump(table_multiples, f, indent=4)  
 
     def _get_active_log(self) -> ActiveProcessDict: 
         with open(self.active_file, 'r') as file:
@@ -124,14 +125,14 @@ class MetaDataStore:
             table_history = json.load(file)
             return table_history
     
-    def _get_table_status(self) -> TableStatusDict:
-        with open(self.table_status_file, 'r') as file:
-            table_status = json.load(file)
-            return table_status
+    def _get_table_multiple(self) -> TableMultipleDict:
+        with open(self.table_multiple_file, 'r') as file:
+            table_multiples = json.load(file)
+            return table_multiples
     
     def _write_to_log(self, log_entry: ProcessLog) -> None:
         process_id = log_entry.process_id
-        self._update_process_internal(process_id, operation = 'write_log')
+        self._update_process_internal(process_id, 'write_log')
         log_entry.log_time = time.time()
         log_entry = asdict(log_entry)
         with open(self.log_file, 'a') as file:
@@ -145,7 +146,7 @@ class MetaDataStore:
         self.log_file = os.path.join(meta_dir, 'log.txt')
         self.column_history_file = os.path.join(meta_dir, 'columns_history.json')
         self.table_history_file = os.path.join(meta_dir, 'tables_history.json')
-        self.table_status_file = os.path.join(meta_dir, 'tables_status.json')
+        self.table_multiple_file = os.path.join(meta_dir, 'tables_multiple.json')
         self.active_file = os.path.join(meta_dir, 'active_log.json')
         meta_lock = os.path.join(meta_dir, 'LOG.lock') 
         self.lock = FileLock(meta_lock)
@@ -158,9 +159,9 @@ class MetaDataStore:
         table_history = self._get_table_history()
         table_history[table_name] = {}
         self._save_table_history(table_history)
-        table_status = self._get_table_status()
-        table_status[table_name] = log.data['status']
-        self._save_table_status(table_status)
+        table_multiples = self._get_table_multiple()
+        table_multiples[table_name] = log.data['allow_multiple']
+        self._save_table_multiple(table_multiples)
 
     def _setup_instance_operation(self, log: ProcessLog) -> None:
         "Nothing happens -> temp instance shouldn't impact metadata"
@@ -176,10 +177,10 @@ class MetaDataStore:
         if table_name in column_history:
             del column_history[table_name]
         self._save_column_history(table_name)
-        table_status = self._get_table_status()
-        if table_name in table_status:
-            del table_status[table_name]
-        self._save_table_status(table_status)
+        table_multiples = self._get_table_multiple()
+        if table_name in table_multiples:
+            del table_multiples[table_name]
+        self._save_table_multiple(table_multiples)
 
     def _delete_instance_operation(self, log: ProcessLog) -> None:
         table_history = self._get_table_history()
@@ -198,6 +199,7 @@ class MetaDataStore:
         table_time = log.data['start_time']
         instance_id = log.data['perm_instance_id']
         changed_columns = log.data['to_change_columns']
+        gen_columns = log.data['gen_columns']
         all_columns = log.data['all_columns']
         prev_instance_id = log.data['origin']
         table_history = self._get_table_history()
@@ -206,7 +208,7 @@ class MetaDataStore:
         columns_history = self._get_column_history()
         columns_history[table_name][instance_id] = {}
         for column in all_columns:
-            if column in changed_columns:
+            if column in changed_columns or column in gen_columns:
                 columns_history[table_name][instance_id][column] = table_time
             else:
                 columns_history[table_name][instance_id][column] = columns_history[table_name][prev_instance_id][column]
@@ -243,13 +245,14 @@ class MetaDataStore:
             if not start_time:
                 start_time = time.time()
             restarts = []
-            active_processes[process_id] = ProcessLog(process_id, author, start_time, start_time, table_name, instance_id, restarts, operation, [],data, None)
+            active_processes[process_id] = ProcessLog(process_id, author, start_time, start_time, table_name, instance_id, restarts, operation, [], [], data, None)
             self._save_active_log(active_processes)
             return process_id
     
     def update_process_data(self, process_id:str, data:dict):
         with self.lock:
             active_processes = self._get_active_log()
+            active_processes[process_id].log_time = time.time()
             active_processes[process_id].data.update(data)
             self._save_active_log(active_processes)
     
@@ -257,6 +260,7 @@ class MetaDataStore:
         active_processes = self._get_active_log()
         active_processes[process_id].complete_steps.append(step)
         active_processes[process_id].step_times.append(time.time())
+        active_processes[process_id].log_time = time.time()
         self._save_active_log(active_processes)
     
     def update_process_step(self, process_id:str, step: str):
@@ -268,6 +272,7 @@ class MetaDataStore:
             restart_time = time.time()
             active_processes = self._get_active_log()
             active_processes[process_id].restarts.append((author, restart_time))
+            active_processes[process_id].log_time = time.time()
             self._save_active_log(active_processes)
             return active_processes[process_id]
     
@@ -275,30 +280,26 @@ class MetaDataStore:
         active_processes = self._get_active_log()
         del active_processes[process_id]
         self._save_active_log(active_processes)
-
-    # def delete_active_process(self, process_id: str):
-    #     with self.lock:
-    #         self._delete_process_internal(process_id)
         
     def get_all_tables(self) -> list[str]:
         with self.lock:
             tables = list[self._get_table_history().keys()]
         return tables
 
-    def _get_status_internal(self, table_name):
-        table_status = self._get_table_status()
-        return table_status[table_name]
+    def _get_multiple_internal(self, table_name):
+        allow_multiples = self._get_table_multiple()
+        return allow_multiples[table_name]
     
-    def get_table_status(self, table_name:str):
+    def get_table_multiple(self, table_name:str):
         with self.lock:
-            return self._get_status_internal(table_name)
+            return self._get_multiple_internal(table_name)
 
     def get_table_version_update(self, instance_id:str, table_name:str,
                                  before_time: Optional[int] = None):
         with self.lock:
             table_history = self._get_table_history() 
             vtime =  table_history[table_name][instance_id]
-            if vtime < before_time:
+            if before_time == None or vtime < before_time:
                 return vtime
             else:
                 return 0
@@ -320,12 +321,9 @@ class MetaDataStore:
         '''
         with self.lock:
             table_history = self._get_table_history() 
-            #table_status = self._get_table_status()[table_name]
             max_t = 0
             max_id = 0
             for instance_id, t in table_history[table_name].items():
-                #if not table_status and t >= before_time:
-                #    return -1
                 if t > max_t and (before_time == None or t < before_time):
                     max_t = t
                     max_id = instance_id
@@ -338,21 +336,18 @@ class MetaDataStore:
         '''
         with self.lock:
             columns_history = self._get_column_history()
-            #table_status = self._get_table_status()[table_name]
             max_t = 0
             max_id = 0
-            for table_id in columns_history[table_name][column]:
-                if column in columns_history[table_name][table_id]:
-                    t = columns_history[table_name][table_id][column]
-                    #if not table_status and t >= before_time:
-                    #    return -1
+            for instance_id in columns_history[table_name]:
+                if column in columns_history[table_name][instance_id]:
+                    t = columns_history[table_name][instance_id][column]
                     if t >= max_t and (before_time == None or t < before_time):
                         max_t = t
-                        max_id = table_id
+                        max_id = instance_id
             return max_t, max_id
 
 
-    def delete_previous_restarts(self):
+    def teminate_previous_restarts(self):
         with self.lock:
             active_logs = self._get_active_log()
             ids = []
@@ -360,8 +355,8 @@ class MetaDataStore:
                 if process.operation == 'restart_database':
                     ids.append(process_id)
             for id in ids:
-                del active_logs[id]
-            self._save_active_log(active_logs)
+                active_logs[id].success = False
+                self._write_to_log(active_logs[id])
 
     def get_process_ids(self) -> list[tuple[str, str]]:
         with self.lock:
@@ -371,9 +366,16 @@ class MetaDataStore:
                 ids.append((id, process.operation))
             return ids
         
+    def print_active_logs(self) -> None:
+        with self.lock:
+            active_logs = self._get_active_log()
+            pprint(active_logs)
+        
     def write_to_log_after_restart(self):
         with self.lock:
             active_logs = self._get_active_log()
             for process_id, process in active_logs.items():
                 if 'write_log' in process.complete_steps:
                     self._write_to_log(process)
+
+    

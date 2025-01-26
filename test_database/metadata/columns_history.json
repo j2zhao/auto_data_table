@@ -1,18 +1,15 @@
 {
     "stories": {
-        "paper_name": [
-            1736460880
-        ],
-        "paper_path": [
-            1736460880
-        ]
+        "1737790526bTyFW": {
+            "paper_name": 1737790526.705385,
+            "paper_path": 1737790526.705385
+        }
     },
     "llm_storage": {
-        "openai_id": [
-            1736460881
-        ],
-        "paper_name": [
-            1736460881
-        ]
-    }
+        "1737790528vCcJD": {
+            "paper_name": 1737790527.075593,
+            "openai_id": 1737790527.075593
+        }
+    },
+    "llm_questions": {}
 }

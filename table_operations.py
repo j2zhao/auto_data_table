@@ -1,280 +1,318 @@
-import time
-import pandas as pd
+
 from typing import Optional
-
-from  auto_data_table import file_operations
-from auto_data_table.meta_operations import MetaDataStore, TempLog
-from auto_data_table.prompt_execution import prompt_execution
-from auto_data_table.prompt_execution import prompt_parser 
+import time
+from auto_data_table.meta_operations import MetaDataStore
+from auto_data_table import file_operations
+from auto_data_table.prompt_execution import prompt_parser
+from auto_data_table.prompt_execution.parse_code import execute_code_from_prompt, execute_gen_table_from_prompt
+from auto_data_table.prompt_execution.parse_llm import execute_llm_from_prompt
 from auto_data_table.database_lock import DatabaseLock
-# does delete work for temp instances??
+import pandas as pd
+import random
+import string
 
-# TODO: write to temp files
-def _update_table_columns(columns: list, table_name: str, db_dir: str, replace: bool = True) -> list[str]:
-    df = file_operations.get_table(table_name, db_dir)
+def _update_table_columns(to_change_columns: list, all_columns:list, instance_id: str, table_name: str, db_dir: str) -> list[str]:
+    df = file_operations.get_table(instance_id, table_name, db_dir)
+    columns = list(dict.fromkeys(df.columns).keys()) + [col for col in all_columns if col not in df.columns]
     for col in columns:
-        if len(df) == 0:
+        if col not in all_columns:
+            df.drop(col, axis=1)
+        elif len(df) == 0:
             df[col] = []
-        elif replace or col not in df.columns:
+        elif col in to_change_columns or col not in df.columns:
             df[col] = pd.NA
-    file_operations.write_table(df, table_name, db_dir) 
-    return list(df.columns)
+    file_operations.write_table(df, instance_id, table_name, db_dir) 
 
+def _fetch_table_cache(external_dependencies:list, db_metadata:MetaDataStore, instance_id:str, table_name:str, db_dir:str,
+                       start_time:float) -> prompt_parser.Cache:
+    cache = {}
+    cache['self'] = file_operations.get_table(instance_id, table_name, db_dir)
 
-def _get_restart_data(operation:str, logs:MetaDataStore, table_name:str, 
-                      restart_time:float) -> tuple[dict[str, TempLog], float, list[float]]:
-    temp_logs = logs.get_temp_logs()
-    op_log = temp_logs[table_name][operation]
-    start_time = op_log.start_time
-    if 'restarts' in op_log.data:
-        restarts = op_log.data['restarts']
-        
-    else:
-        restarts = []
-    restarts.append(restart_time)
-    #logs.add_restart_time(operation, restart_time, table_name)
-
-    return temp_logs[table_name], start_time, restarts
-
-def setup_table(table_name: str, db_dir: str, author: str, replace: bool = False, allow_multiple: bool = True):
-    lock = DatabaseLock(table_name, db_dir)
-    lock.acquire_exclusive_lock()
-    start_time = int(time.time())
-    logs = MetaDataStore(db_dir)
-    logs.write_to_temp_log(operation = 'start_setup_table', table_name = table_name,
-                           author = author, start_time = start_time, data = {'replace': replace, 'allow_multiple': allow_multiple}
-                           ) # TODO: Start Operation
-    if not replace and table_name in logs.get_all_tables():
-        replace = False
-    else:
-        replace = True
-    logs.write_to_temp_log(operation = 'check_setup_table', table_name = table_name,
-                           author = author, start_time = start_time, 
-                           data = {'replace': replace}
-                           )
-    if not replace:
-        logs.write_to_setup_table_log(table_name = table_name, author = author, 
-                                  start_time = start_time, executed = False, allow_multiple = None)
-    else:
-        file_operations.setup_table_folder(table_name, db_dir, allow_multi=allow_multiple)
-        logs.write_to_setup_table_log(table_name = table_name, author = author, 
-                                    start_time = start_time, executed = True, allow_multiple= allow_multiple)
-    lock.release_exclusive_lock()
-    return replace
-
-def restart_setup_table(table_name: str, db_dir: str, author: str):
-    #TODO: add locks???
-    restart_time = int(time.time())
-    logs = MetaDataStore(db_dir)
-    # get all the restarts
-    temp_logs, start_time, restarts = _get_restart_data('start_setup_table', logs, table_name, restart_time)
-    if not 'check_setup_table' in temp_logs:
-        replace = temp_logs['check_setup_table' ].data['replace']
-        if not replace and table_name in logs.get_all_tables():
-            replace_ = False
+    for dep in external_dependencies:
+        table, _, _,instance, latest = dep
+        if latest:
+            #instance = db_metadata.get_last_table_update(table, before_time=start_time)
+            cache[table] = file_operations.get_table(instance, table, db_dir)
         else:
-            replace_ = True 
-        logs.write_to_temp_log(operation = 'check_setup_table', table_name = table_name,
-                            author = author, start_time = start_time, 
-                            data = {'replace': replace_}
-                            )
+            cache[(table, instance)] = file_operations.get_table(instance, table, db_dir)
+    return cache
+    
+def execute_table(table_name: str, db_dir: str, author: str, instance_id: str = 'TEMP'):
+    instance_lock = DatabaseLock(db_dir, table_name, instance_id)
+    instance_lock.acquire_exclusive_lock()
+    prompts = file_operations.get_prompts(instance_id, table_name, db_dir)
+    #print(prompts)
+    #raise ValueError()
+    if 'origin' in prompts['description']:
+        origin = prompts['description']
     else:
-        replace_ = temp_logs['check_setup_table' ].data['replace']
-    if replace_:
-        file_operations.setup_table_folder(table_name, db_dir)
-    logs.write_to_setup_table_log(table_name = table_name, author = author, 
-                                  start_time = start_time, restarts = restarts, executed = replace)
-    return replace
+        origin = None
+    db_metadata = MetaDataStore(db_dir)
+    start_time = time.time()
+    top_pnames, to_change_columns, all_columns, internal_prompt_deps, external_deps = prompt_parser.parse_prompts(prompts, db_metadata , start_time,  table_name, db_dir)
+    # print(top_pnames)
+    # print(to_change_columns)
+    # print(all_columns)
+    # raise ValueError()
+    # execute prompts
+    dep_locks = []
+    for pname in external_deps:
+        for table, _, instance, _,_ in external_deps[pname]:
+            lock = DatabaseLock(db_dir, table_name=table, instance_id=instance)
+            lock.acquire_shared_lock()
+            dep_locks.append(lock)
 
-def setup_table_instance(table_id: str, table_name: str, db_dir: str, author: str, 
-                         prev_name_id: Optional[str] = None,
+    data = {'origin': origin,
+            'top_pnames': top_pnames, 'to_change_columns': to_change_columns, 'start_time': start_time,
+            'all_columns': all_columns, 'internal_prompt_deps': internal_prompt_deps, 'external_deps': external_deps,
+            'gen_columns': prompts[top_pnames[0]]['parsed_changed_columns']}
+    process_id = db_metadata.start_new_process(author, 'execute_table', table_name, instance_id, start_time, data = data)
+   # raise ValueError()
+    _update_table_columns(to_change_columns,all_columns, instance_id, table_name, db_dir) 
+    db_metadata.update_process_step(process_id, 'clear_table')
+    for i, pname in enumerate(top_pnames):
+        prompt = prompt_parser.convert_reference(prompts[pname])
+        cache = _fetch_table_cache(external_deps[pname], db_metadata, instance_id, table_name, db_dir, start_time)
+        if i == 0:
+            execute_gen_table_from_prompt(prompt, cache, instance_id, table_name, db_dir) 
+        else:
+            if prompt['type'] == 'code':
+                execute_code_from_prompt(prompt, cache, instance_id, table_name, db_dir)
+            elif prompt['type'] == 'llm':
+                execute_llm_from_prompt(prompt, cache, instance_id, table_name, db_dir)
+        db_metadata.update_process_step(process_id, pname)
+        #raise ValueError()
+    rand_str = ''.join(random.choices(string.ascii_letters, k=5))
+    perm_instance_id = str(int(time.time())) + rand_str
+    db_metadata.update_process_data(process_id, {'perm_instance_id': perm_instance_id})
+    file_operations.materialize_table(perm_instance_id, instance_id, table_name, db_dir)
+    db_metadata.write_to_log(process_id)
+    instance_lock.release_exclusive_lock()
+    for lock in dep_locks:
+        lock.release_shared_lock()
+
+
+def restart_execute_table(author:str, process_id:str, db_dir:str): #TODO also allow clearing??
+    db_metadata = MetaDataStore(db_dir)
+    process = db_metadata.update_process_restart(author, process_id)
+    try: 
+        table_name = process.table_name
+        top_pnames = process.data['top_pnames']
+        to_change_columns = process.data['to_change_columns']
+        all_columns = process.data['all_columns']
+        internal_prompt_deps = process.data['internal_prompt_deps']
+        external_deps = process.data['external_deps']
+        instance_id = process.instance_id
+        start_time = process.data['start_time']
+        origin = process.data['origin']
+    except Exception as e:
+        print(process)
+        db_metadata.write_to_log(process_id, success=False)
+        print(f'Error Fetching Data for process {process_id}. Not executed.')
+        raise e
+    
+    if 'stop_execute' in process.complete_steps:
+        file_operations.clear_table_instance(instance_id, table_name, db_dir)
+        db_metadata.write_to_log(process_id, success=False)
+        return
+
+    #instance_lock = DatabaseLock(table_name, db_dir, instance_id)
+    #instance_lock.acquire_exclusive_lock()
+    prompts = file_operations.get_prompts(instance_id, table_name, db_dir)
+    # dep_locks = []
+    # for table, _, instance, _,_ in external_deps:
+    #     lock = DatabaseLock(db_dir, table_name=table, instance_id=instance)
+    #     lock.acquire_shared_lock()
+    #     dep_locks.append(lock)
+
+    if not 'clear_table' in process.complete_steps:
+        _update_table_columns(to_change_columns,all_columns, instance_id, table_name, db_dir) 
+        db_metadata.update_process_step(process_id, 'clear_table')
+    
+    for i, pname in enumerate(top_pnames):
+        if pname in process.complete_steps:
+            continue
+        prompt = prompt_parser.convert_reference(prompts[pname])
+        cache = _fetch_table_cache(external_deps[pname], db_metadata, instance_id, table_name, db_dir, start_time)
+        if i == 0:
+            execute_gen_table_from_prompt(prompt, cache, instance_id, table_name, db_dir, start_time) 
+        else:
+            if prompt['type'] == 'code':
+                execute_code_from_prompt(prompt, cache, instance_id, table_name, db_dir)
+            elif prompt['type'] == 'llm':
+                execute_llm_from_prompt(prompt, cache, instance_id, table_name, db_dir)
+        db_metadata.update_process_step(process_id, pname)
+    
+    if 'instance_id' in process.data:
+        perm_instance_id = process.data['perm_instance_id']
+    else:
+        rand_str = ''.join(random.choices(string.ascii_letters, k=5))
+        perm_instance_id = str(int(time.time())) + rand_str
+        db_metadata.update_process_data(process_id, {'instance_id': perm_instance_id})
+    file_operations.materialize_table(perm_instance_id, instance_id, table_name, db_dir)
+    db_metadata.write_to_log(process_id)
+    # instance_lock.release_exclusive_lock()
+    # for lock in dep_locks:
+    #     lock.release_shared_lock()
+
+def delete_table(table_name: str, db_dir: str, author: str):
+    db_metadata = MetaDataStore(db_dir)
+    lock = DatabaseLock(db_dir, table_name)
+    lock.acquire_exclusive_lock()
+    operation = 'delete_table_instance'
+    process_id = db_metadata.start_new_process(author, operation, table_name)
+    file_operations.delete_table(table_name, db_dir)
+    db_metadata.write_to_log(process_id)
+    lock.release_exclusive_lock()
+
+def restart_delete_table(author:str, process_id:str, db_dir:str):
+    db_metadata = MetaDataStore(db_dir)
+    process = db_metadata.update_process_restart(author, process_id)
+    try:
+        table_name = process.table_name
+    except Exception as e:
+        print(process)
+        db_metadata.write_to_log(process_id, success=False)
+        print(f'Error Fetching Data for process {process_id}. Not executed.')
+        raise e
+    #lock = DatabaseLock(db_dir, table_name)
+    #lock.acquire_exclusive_lock()
+    file_operations.delete_table(table_name, db_dir)
+    db_metadata.write_to_log(process_id)
+    #lock.release_exclusive_lock()
+
+def delete_table_instance(instance_id: str, table_name: str, db_dir: str, author: str):
+    db_metadata = MetaDataStore(db_dir)
+    operation = 'delete_table_instance'
+    lock = DatabaseLock(db_dir, table_name, instance_id)
+    lock.acquire_exclusive_lock()
+    process_id = db_metadata.start_new_process(author, operation, table_name, instance_id)
+    file_operations.delete_table(table_name, db_dir, instance_id)
+    db_metadata.write_to_log(process_id)
+    lock.release_exclusive_lock()
+
+def restart_delete_table_instance(author:str, process_id:str, db_dir:str):
+    db_metadata = MetaDataStore(db_dir)
+    process = db_metadata.update_process_restart(author, process_id)
+    try:
+        table_name = process.table_name
+        instance_id = process.instance_id
+    except Exception as e:
+        print(process)
+        db_metadata.write_to_log(process_id, success=False)
+        print(f'Error Fetching Data for process {process_id}. Not executed.')
+        raise e
+    #lock = DatabaseLock(db_dir, table_name, instance_id)
+    #lock.acquire_exclusive_lock()
+    file_operations.delete_table(table_name, db_dir, instance_id)
+    db_metadata.write_to_log(process_id)
+    #lock.release_exclusive_lock()
+
+def setup_table_instance(instance_id: str, table_name: str, db_dir: str, author: str, 
+                         prev_name_id: str = '',
                          prompts: list[str] = [],
                          gen_prompt: str = ''):
-    
     if len(prompts) != 0 and gen_prompt not in prompts:
         raise ValueError('Need to Define gen_prompt')
-    
-    if prev_name_id != None:
-        prev_lock = TableLock(table_name, db_dir, prev_name_id)
-        prev_lock.acquire_read_lock()
-    lock = TableLock(table_name, db_dir, table_id)
-    lock.acquire_write_lock()
-    start_time = int(time.time())
-    logs = MetaDataStore(db_dir)
-    logs.write_to_temp_log(operation = 'start_setup_table_instance', table_name = table_name,
-                           author = author, start_time = start_time, 
-                           data = {'prev_name_id': prev_name_id, 
-                                   'prompts': prompts, 'gen_prompt':gen_prompt}
-                           )
-    file_operations.setup_temp_table(table_name, db_dir, prev_name_id, prompts, gen_prompt) 
-    logs.write_to_setup_instance_log(table_name = table_name, prev_name_id = prev_name_id,
-                                   author = author, 
-                                  start_time = start_time, prompts=prompts)
-    lock.release_write_lock()
-    if prev_name_id != None:
-        prev_lock.release_read_lock()
-
-def restart_setup_table_instance(table_name: str, db_dir: str, author: str):
-    restart_time = int(time.time())
-    logs = MetaDataStore(db_dir)
-    temp_logs, start_time, restarts  = _get_restart_data('start_setup_table_instance', logs, table_name, restart_time)
-    prev_name_id = temp_logs['start_setup_table_instance'].data['prev_name_id']
-    prompts = temp_logs['start_setup_table_instance'].data['prompts']
-    gen_prompt = temp_logs['start_setup_table_instance'].data['gen_prompt']
-    file_operations.setup_temp_table(table_name, db_dir, prev_name_id, prompts, gen_prompt) 
-
-    logs.write_to_setup_instance_log(table_name = table_name, prev_name_id = prev_name_id,
-                                   author = author, 
-                                  start_time = start_time, prompts=prompts, restarts=restarts)
-    
-
-def delete_table(table_name: str, db_dir: str, author: str, time_id: Optional[int]):
-    lock = file_operations.lock_database(db_dir)
-    start_time = int(time.time())
-    logs = MetaDataStore(db_dir)
-    logs.write_to_temp_log(operation = 'start_delete_table', table_name = table_name,
-                           author = author, start_time = start_time,
-                           data={'time_id': time_id} )
-    file_operations.delete_table(table_name, db_dir, time_id)
-    logs.write_to_delete_table_log(table_name = table_name, time_id = time_id,
-                                   author = author, start_time = start_time, op_time = int(time.time()))
-    file_operations.unlock_database(lock)
-        
-def restart_delete_table(table_name: str, db_dir: str, author: str):
-    restart_time = int(time.time()) 
-    logs = MetaDataStore(db_dir)
-    temp_logs, start_time, restarts  = _get_restart_data('start_delete_table', logs, table_name, restart_time)
-    time_id = temp_logs['start_delete_table'].data['time_id']
-    file_operations.delete_table(table_name, db_dir, time_id)
-    logs.write_to_delete_table_log(table_name = table_name, time_id = time_id,
-                                   author = author, start_time = start_time, restarts = restarts)
-
-
-
-def execute_table(table_name: str, db_dir: str, author: str): # ADD LOGGING
-    lock = file_operations.lock_table(table_name, db_dir)
-    start_time = time.time()
-    logs = MetaDataStore(db_dir)
-    logs.write_to_temp_log(operation = 'start_execute_table', table_name = table_name,
-                           author = author, start_time = start_time)
-    
-    prompts = file_operations.get_prompts(table_name, db_dir)
-    metadata = prompts['metadata']
-    del prompts['metadata']
-    for name, prompt in prompts.items():
-        if 'parsed_changed_columns' not in prompt:
-            prompt['parsed_changed_columns'] = prompt_parser.get_changed_columns(prompt) # need to deal with?
-            file_operations.write_prompt(name, prompt, table_name, db_dir)
-    table_generator = prompts[metadata['table_generator']]
-    del prompts[metadata['table_generator']]
-    prompt_names = prompt_parser.get_execution_order(prompts, table_name)
-    if 'origin' in metadata:
-        changed_columns = prompt_parser.get_replacement_columns(prompt_names, prompts, metadata['origin'], start_time,
-                                                                table_generator['parsed_changed_columns'] , logs, table_name, db_dir, start_time) 
+    db_metadata = MetaDataStore(db_dir)
+    allow_multiple = db_metadata.get_table_multiple(table_name)
+    if not allow_multiple and instance_id != 'TEMP':
+        raise ValueError('Cannot Define Instance ID for Table without Versioning')
+    elif allow_multiple and instance_id == 'TEMP':
+        instance_id = 'TEMP_' + ''.join(random.choices(string.ascii_letters, k=10))
+    lock = DatabaseLock(db_dir, table_name, instance_id)
+    lock.acquire_exclusive_lock()
+    if prev_name_id != '':
+        prev_start_time = db_metadata.get_table_version_update(prev_name_id, table_name)
     else:
-        changed_columns = prompt_parser.get_all_columns(prompts)
-    changed_columns += table_generator['parsed_changed_columns']
-    all_columns = _update_table_columns(changed_columns, table_name, db_dir) 
-    data = {'all_columns':all_columns, 'changed_columns': changed_columns, 
-            'execution_order':prompt_names, 'table_generator_name': metadata['table_generator']}
-    logs.write_to_temp_log(operation = 'update_columms', table_name = table_name,
-                           author = author, start_time = start_time, 
-                           data = data)
-    table_generator = prompt_parser.convert_reference(table_generator, table_name)
-    prompt_execution.execute_generation(table_generator, table_name, db_dir, start_time) 
-    
-    logs.write_to_temp_log(operation = 'table_generator', table_name = table_name,
-                           author = author, start_time = start_time)
+        prev_start_time = 0
+    data = {'gen_prompt': gen_prompt, 'prompts': prompts, 'prev_name_id': prev_name_id}
+    process_id = db_metadata.start_new_process(author, 'setup_table_instance', table_name, instance_id, data= data)
+    file_operations.setup_table_instance(instance_id, table_name, db_dir, prev_name_id, prev_start_time, prompts, gen_prompt) 
+    db_metadata.write_to_log(process_id)
+    lock.release_exclusive_lock()
 
-    for name in prompt_names:
-        prompt = prompt_parser.convert_reference(prompts[name], table_name)
-        prompt_execution.execute_prompt(prompt, table_name, db_dir, start_time)
-        logs.write_to_temp_log(operation = '{name}', table_name = table_name,
-                           author = author, start_time = start_time) 
-    
-    time_id = file_operations.materialize_table(table_name, db_dir)
-    logs.write_to_execute_table_log(changed_columns = changed_columns, all_columns = all_columns, 
-                            time_id = time_id, table_name = table_name,
-                           author = author, start_time = start_time)
-    lock.release()
-    # if copy:
-    #     setup_table_instance(table_name, db_dir, 'execute_table', time_id)
+def restart_setup_table_instance(author:str, process_id:str, db_dir:str):
+    db_metadata = MetaDataStore(db_dir)
+    process = db_metadata.update_process_restart(author, process_id)
+    try:
+        table_name = process.table_name
+        instance_id = process.instance_id
+        gen_prompt = process.data['gen_prompt']
+        prompts = process.data['prompts']
+        prev_name_id = process.data['prev_name_id']
+    except Exception as e:
+        print(process)
+        db_metadata.write_to_log(process_id, success=False)
+        print(f'Error Fetching Data for process {process_id}. Not executed.')
+    #lock = DatabaseLock(db_dir, table_name, instance_id)
+    #lock.acquire_exclusive_lock()
+    file_operations.setup_table_instance(instance_id, table_name, db_dir, prev_name_id, prompts, gen_prompt) 
+    db_metadata.write_to_log(process_id)
+    #lock.release_exclusive_lock()
 
-def restart_execute_table(table_name: str, db_dir: str, author: str) -> bool: # ADD LOGGING
-    restart_time = time.time()
-    logs = MetaDataStore(db_dir)
-    temp_logs, start_time, restarts  = _get_restart_data('start_execute_table', logs, table_name, restart_time)
+def setup_table(table_name: str, db_dir: str, author: str, allow_multiple: bool = True):
+    db_metadata = MetaDataStore(db_dir)
+    lock = DatabaseLock(db_dir, table_name)
+    lock.acquire_exclusive_lock()
+    process_id  = db_metadata.start_new_process(author, 'setup_table', table_name, data= {'allow_multiple': allow_multiple})
+    file_operations.setup_table_folder(table_name, db_dir)
+    db_metadata.write_to_log(process_id)
+    # write to metadata about multiple
+    lock.release_exclusive_lock()
 
-    prompts = file_operations.get_prompts(table_name, db_dir)
-    metadata = prompts['metadata']
-    del prompts['metadata']
-    if 'update_columms' in temp_logs:
-        all_columns = temp_logs['update_columms'].data['all_columns']
-        changed_columns = temp_logs['update_columms'].data['changed_columns']
-        prompt_names = temp_logs['update_columms'].data['execution_order']
-        table_generator = prompts[metadata['table_generator']]
-        del prompts[metadata['table_generator']]
-    else:
-        for name, prompt in prompts.items():
-            if 'parsed_changed_columns' not in prompt:
-                prompt['parsed_changed_columns'] = prompt_parser.get_changed_columns(prompt) # need to deal with?
-                file_operations.write_prompt(name, prompt, table_name, db_dir)
+def restart_setup_table(author:str, process_id:str, db_dir:str):
+    db_metadata = MetaDataStore(db_dir)
+    process = db_metadata.update_process_restart(author, process_id)
+    try:
+        table_name = process.table_name
+        allow_multiple = process.data['allow_multiple']
+    except Exception as e:
+        print(process)
+        db_metadata.write_to_log(process_id, success=False)
+        print(f'Error Fetching Data for process {process_id}. Not executed.')
+    #lock = DatabaseLock(db_dir, table_name)
+    #lock.acquire_exclusive_lock()
+    file_operations.setup_table_folder(table_name, db_dir)
+    db_metadata.write_to_log(process_id)
+    #lock.release_exclusive_lock()
+
+
+
+
+def restart_database(author:str, db_dir: str, excluded_processes: list[str] = []):
+    db_lock = DatabaseLock(db_dir)
+    db_lock.acquire_shared_lock()
+    restart_lock = DatabaseLock(db_dir, table_name='RESTART')
+    restart_lock.acquire_exclusive_lock()
+    db_metadata = MetaDataStore(db_dir)
+    db_metadata.teminate_previous_restarts()
     
-        table_generator = prompts[metadata['table_generator']]
-        del prompts[metadata['table_generator']]
-        prompt_names = prompt_parser.get_execution_order(prompts)
+    data = {'excluded_processes': excluded_processes, 'active_ids': active_ids}
+    process_id = db_metadata.start_new_process(author, 'restart_database', table_name = '', data= data)
+    db_metadata.write_to_log_after_restart()
+    active_ids = db_metadata.get_process_ids()
     
-        if 'origin' in metadata:
-            changed_columns = prompt_parser.get_replacement_columns(prompts, start_time, metadata['origin'], logs, table_name, db_dir) 
-        else:
-            changed_columns = prompt_parser.get_all_columns(prompts) 
-    
-        all_columns = _update_table_columns(changed_columns, table_name, db_dir)
-        data = {'all_columns':all_columns, 'changed_columns': changed_columns, 
-            'execution_order':prompt_names, 'table_generator_name': metadata['table_generator']}
-        logs.write_to_temp_log(operation = 'update_columms', table_name = table_name,
-                            author = author, start_time = start_time, 
-                            data = data) 
-    if 'table_generator' not in temp_logs:
-        table_generator = prompt_parser.convert_reference(table_generator)
-        prompt_execution.execute_generation(table_generator, start_time, table_name, db_dir) 
-        logs.write_to_temp_log(operation = 'table_generator', table_name = table_name,
-                           author = author, start_time = start_time)
-    for name in prompt_names:
-        if name in temp_logs:
+    for id, operation in active_ids:
+        if id == process_id:
             continue
-        prompt = prompt_parser.convert_reference(prompts[name])
-        prompt_execution.execute_prompt(prompt, table_name, start_time, db_dir)
-        logs.write_to_temp_log(operation = '{name}', table_name = table_name,
-                           author = author, start_time = start_time) 
+        if id in excluded_processes:
+            if operation == 'execute_table':
+                db_metadata.update_process_step(id, 'stop_execute')
+            else:
+                raise ValueError(f"Can Only Stop Table Executions Right Now: {id}")
+        if operation == 'setup_table':
+            restart_setup_table(author, id, db_dir)
+        elif operation == 'setup_table_instance':
+            restart_setup_table_instance(author, id, db_dir)
+        elif operation == 'delete_table':
+            restart_delete_table(author, id, db_dir)
+        elif operation == 'delete_table_instance':
+            restart_delete_table_instance(author, id, db_dir)
+        elif operation == 'execute_table':
+            restart_execute_table(author, id, db_dir)
+        db_metadata.update_process_step(process_id, (id, operation))
     
-    time_id = file_operations.materialize_table(table_name, db_dir)
-    logs.write_to_execute_table_log(changed_columns = changed_columns, all_columns = all_columns,
-                                     time_id = time_id, restarts = restarts,
-                                     table_name = table_name, author = author, start_time = start_time)    
-
-def clean_up_after_restart(db_dir: str, author: str) -> None:
-    lock = file_operations.lock_database(db_dir)
-    start_time = time.time()
-    logs = MetaDataStore(db_dir)
-    temp_logs = logs.get_temp_logs()
-    in_progress_tables = []
-    for table_name in temp_logs:
-        if len(temp_logs[table_name]) > 0:
-            in_progress_tables.append(table_name)
-    tables = logs.get_all_tables()
-    for table_name in tables:
-        if len(temp_logs[table_name]) > 0:
-            if 'write_final_log' in temp_logs[table_name]:
-                logs.write_to_log(temp_logs[table_name]['write_final_log'])
-            elif 'start_setup_table' in temp_logs[table_name]:   
-                restart_setup_table(table_name, db_dir, author)
-            elif 'start_setup_table_instance' in temp_logs[table_name]:   
-                restart_setup_table_instance(table_name, db_dir, author)
-            elif 'start_delete_table' in temp_logs[table_name]:
-                restart_delete_table(table_name, db_dir, author)
-            elif 'start_execute_table' in temp_logs[table_name]:
-                restart_execute_table(table_name, db_dir, author)
-    logs.write_to_restart_db_log(author=author, start_time = start_time, table_name = 'DATABASE',
-                                 in_progress_tables = in_progress_tables)
-    file_operations.unlock_database(lock)
+    db_metadata.write_to_log(process_id)
+    db_lock.release_shared_lock()
+    restart_lock.release_exclusive_lock()

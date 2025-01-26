@@ -9,7 +9,6 @@ import os
 def copy_files_to_table(base_dir, db_dir, table_name):
     org_path = os.path.join(base_dir, table_name)
     new_path = os.path.join(db_dir, table_name)
-    #new_path = os.path.join(new_path, 'TEMP')
     new_path = os.path.join(new_path, 'prompts')
     for file in os.listdir(org_path):
         if file.endswith('.yaml'):
@@ -23,63 +22,56 @@ yaml_base_dir = './test_data/test_data_db'
 db_dire = './test_database'
 
 def test_single_row():
-    # create db
+    # ACTION: create db
     command = ["python", "execute_operation.py",  "-op", "database", "-db", "test_database", "-r"]
     subprocess.run(command)
-    # create tables
-    command = ["python", "execute_operation.py", "-op", "table", "-db", "test_database", "-t", "stories"]
+
+    # ACTION: create tables
+    command = ["python", "execute_operation.py", "-op", "table", "-db", "test_database", "-t", "stories", ]
     subprocess.run(command)
     command = ["python", "execute_operation.py", "-op", "table", "-db", "test_database", "-t", "llm_storage"]
     subprocess.run(command)
-    #command = ["python", "execute_operation.py",  "-op", "table", "-db", "test_database", "-t", "llm_questions"]
-    #subprocess.run(command)
-    #command = ["python", "execute_operation.py", "-op", "table", "-db", "test_database", "-t", "stories"]
-    #subprocess.run(command)
-    #raise ValueError()
-    #files = ['fetch_stories.yaml', 'fetch_stories_5.yaml']
+    command = ["python", "execute_operation.py",  "-op", "table", "-db", "test_database", "-t", "llm_questions", "-m"]
+    subprocess.run(command)
+
+    # ACTION: copy files 
     copy_files_to_table(yaml_base_dir, db_dire, "stories")
-    #files = ['fetch_llm_storage.yaml', 'remove_ll.yaml']
     copy_files_to_table(yaml_base_dir, db_dire, "llm_storage")
-    #raise ValueError()
-    
-    #raise ValueError()
+    copy_files_to_table(yaml_base_dir, db_dire, "llm_questions")
+
+    # ACTION: create table instances    
     command = ["python", "execute_operation.py", "-op", "table_instance", "-db", "test_database", "-t", "stories", 
                "-p", "fetch_stories", "-gp", "fetch_stories"]
     subprocess.run(command)
-    #raise ValueError()
     command = ["python", "execute_operation.py", "-op", "table_instance", "-db", "test_database", "-t", "llm_storage", 
                "-p", "fetch_llm_storage", "upload_openai", "-gp", "fetch_llm_storage"]
     subprocess.run(command)
-    #raise ValueError()
-    # execute updates
+  
+    # ACTION: execute updates
     command = ["python", "execute_operation.py",  "-op", "execute", "-db", "test_database", "-t", "stories"]
     subprocess.run(command)
-    #raise ValueError()
+    # #raise ValueError()
     command = ["python", "execute_operation.py",  "-op", "execute", "-db", "test_database", "-t", "llm_storage"]
     subprocess.run(command)
 
-    command = ["python", "execute_operation.py", "-op", "table_instance", "-db", "test_database", "-t", "llm_storage", 
-               "-p", "remove_llm_storage", "-gp", "remove_llm_storage"]
-    subprocess.run(command)
-    command = ["python", "execute_operation.py",  "-op", "execute", "-db", "test_database", "-t", "llm_storage"]
-    subprocess.run(command)
+    # command = ["python", "execute_operation.py", "-op", "table_instance", "-db", "test_database", "-t", "llm_storage", 
+    #            "-p", "remove_llm_storage", "-gp", "remove_llm_storage"]
+    # subprocess.run(command)
+    # command = ["python", "execute_operation.py",  "-op", "execute", "-db", "test_database", "-t", "llm_storage"]
+    # subprocess.run(command)
 
-def test_five_rows():
-    pass
+# def test_five_rows():
+#     pass
 
-def test_column_update():
-    pass
+# def test_column_update():
+#     pass
 
-def test_row_update():
-    pass
+# def test_row_update():
+#     pass
 
-def test_column_restart():
-    # USE timeout test
-    pass
-
-def test_row_restart():
-    # USE timeout test
-    pass
+# def test_restart():
+#     # USE timeout test
+#     pass
 
 def cleanup_folder():
     shutil.rmtree(yaml_base_dir)

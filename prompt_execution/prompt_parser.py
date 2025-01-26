@@ -34,15 +34,15 @@ def get_table_value(item: Any, index: int, cache:dict[str, pd.DataFrame]) -> str
 
 
 def _topological_sort(items: list, dependencies: dict) -> list:
-    # Step 1: Build the graph based on child -> parent dependencies
+    # Step 1: Build the graph based on parent -> child dependencies
     graph = {item: [] for item in items}
     
-    for child, parents in dependencies.items():
-        for parent in parents:
-            if parent not in graph:
-                graph[parent] = []  # Ensure parent exists in graph
-            graph[child].append(parent)  # Child points to its parents
-
+    for parent, children in dependencies.items():
+        for child in children:
+            if child not in graph:
+                graph[child] = []  # Ensure child exists in graph
+            graph[parent].append(child)  # Parent points to its children
+    
     # Step 2: Perform DFS-based topological sorting
     visited = set()  # To track visited nodes
     visiting = set()  # To track the current recursion stack (for cycle detection)
@@ -55,19 +55,18 @@ def _topological_sort(items: list, dependencies: dict) -> list:
             return
 
         visiting.add(node)  # Mark node as visiting
-        for parent in graph[node]:
-            dfs(parent)  # Visit parents first
+        for child in graph[node]:
+            dfs(child)  # Visit children first
         visiting.remove(node)  # Remove from visiting
         visited.add(node)  # Mark node as visited
-        sorted_order.append(node)  # Add node after processing parents
+        sorted_order.append(node)  # Add node after processing children
 
     # Step 3: Apply DFS to all items
     for item in items:
         if item not in visited:
             dfs(item)
-
-    # Reverse order to ensure parents come before children
-    return sorted_order[::-1]
+    # Return the sorted order directly (no need to reverse because we're appending after dependencies)
+    return sorted_order
 
 
 def parse_string(input_string):
@@ -84,17 +83,24 @@ def parse_string(input_string):
     else:
         raise ValueError("Input string does not match the expected format.")
 
-InternalDeps = dict[str[set[str]]]
-ExternalDeps = dict[str[set[tuple[str, str, str, float]]]]
+InternalDeps = dict[str, list[str]]
+ExternalDeps = dict[str, list[tuple[str, str, str, float, bool]]]
 
 def _parse_dependencies(prompts:dict[Prompt], table_generator:str,
                         start_time: float, db_metadata:MetaDataStore) -> tuple[InternalDeps, ExternalDeps]:
 
     external_deps = {}
     internal_prompt_deps = {}
+    internal_deps = {}
+    gen_columns = prompts[table_generator]['parsed_changed_columns']
     for pname in prompts:
         external_deps[pname] = set()
-        internal_prompt_deps[pname] = set(table_generator)
+        if pname != table_generator:
+            internal_deps[pname] = set(gen_columns)
+            internal_prompt_deps[pname] = {table_generator}
+        else:
+            internal_deps[pname] = set()
+            internal_prompt_deps[pname] = set()
 
         for dep in prompts[pname]['dependencies']:
             table, column, instance = parse_string(dep)
@@ -103,9 +109,12 @@ def _parse_dependencies(prompts:dict[Prompt], table_generator:str,
             else:
                 latest = False
             if table == 'self':
-                internal_prompt_deps[pname].append(column) #TODO check this
+                internal_deps[pname].add(column) #TODO check this
+                for pn in prompts:
+                    if column in prompts[pn]['parsed_changed_columns']:
+                        internal_prompt_deps[pname].add(pn)
                 continue
-            elif not db_metadata.get_table_status(table) and instance != None:
+            elif not db_metadata.get_table_multiple(table) and instance != None:
                 raise ValueError(f"Table dependency ({table}, {column}, {instance}) for prompt {pname} doesn't have versions.")
             elif column != None:
                 if instance != None:
@@ -122,31 +131,32 @@ def _parse_dependencies(prompts:dict[Prompt], table_generator:str,
                 if mat_time == 0:
                     raise ValueError('Table dependency ({table}, {column}, {instance}) for prompt {pname} not materialized at {start_time}')
             external_deps[pname].add((table, column, instance, mat_time, latest))
-    return internal_prompt_deps, external_deps
+        external_deps[pname] = list(external_deps[pname])
+        internal_deps[pname] = list(internal_deps[pname])
+        internal_prompt_deps[pname] = list(internal_prompt_deps[pname])
+    return internal_prompt_deps, internal_deps, external_deps
 
 def parse_prompts(prompts: dict[Prompt], db_metadata: MetaDataStore , start_time:float,table_name:str, db_dir: str):
-    metadata = prompts['metadata']
-    del prompts['metadata']
+    metadata = prompts['description']
+    del prompts['description']
     
 
     for pname, prompt in prompts.items():
         if 'parsed_changed_columns' not in prompt:
             prompt['parsed_changed_columns'] = get_changed_columns(prompt) # need to deal with?
     
-    internal_prompt_deps, external_deps = _parse_dependencies(prompts, metadata['table_generator'], start_time, db_metadata)
-
-    top_pnames = _topological_sort(list(prompts.keys), internal_prompt_deps)
+    internal_prompt_deps, internal_deps, external_deps = _parse_dependencies(prompts, metadata['table_generator'], start_time, db_metadata)
+    top_pnames = _topological_sort(list(prompts.keys()), internal_prompt_deps)
     all_columns = []
     to_change_columns = []
-    for pname in top_pnames[1:]:
-        all_columns.append(prompts[pname]['parsed_changed_columns'])
+    for i, pname in enumerate(top_pnames):
+        all_columns += prompts[pname]['parsed_changed_columns']
 
     if 'prev_name_id' in metadata:
         to_execute = []
         prev_start_time = metadata['prev_start_time']
         prev_name_id = metadata['prev_name_id']
         to_execute = [top_pnames[0]] # we always run the generator
-
         prev_prompts = file_operations.get_prompts(table_name, db_dir, prev_name_id)
         for pname in top_pnames[1:]:
             execute = False
@@ -167,7 +177,9 @@ def parse_prompts(prompts: dict[Prompt], db_metadata: MetaDataStore , start_time
                     execute = True
             if execute:
                 to_execute.append(pname)
-                to_change_columns.append(prompts[pname]['parsed_changed_columns'])
+                to_change_columns += prompts[pname]['parsed_changed_columns']
     else:
-        to_change_columns = all_columns
-    return top_pnames, to_change_columns, all_columns, internal_prompt_deps, external_deps
+        #to_change_columns = all_columns
+        for pname in top_pnames[1:]:
+            to_change_columns += prompts[pname]['parsed_changed_columns']
+    return top_pnames, to_change_columns, all_columns, internal_deps, external_deps
